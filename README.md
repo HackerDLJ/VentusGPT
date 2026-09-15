@@ -1,5 +1,5 @@
 # VentusGPT
-##  voice-first, multilingual conversational platform that turns complex weather data into clear, actionable guidance for non-technical users. 
+## A voice-first, multilingual conversational platform that turns complex weather data into clear, actionable guidance for non-technical users. 
 ### Run Locally
 
 **Prerequisites:**  Node.js
