@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="100%" height="100%">
+  <defs>
+    <!-- Metallic gradient for the 3 Ventus aerodynamic bars -->
+    <linearGradient id="ventusBarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="25%" stop-color="#F1F5F9" />
+      <stop offset="60%" stop-color="#CBD5E1" />
+      <stop offset="100%" stop-color="#94A3B8" />
+    </linearGradient>
+
+    <linearGradient id="ventusBarGradLong" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="20%" stop-color="#F8FAFC" />
+      <stop offset="55%" stop-color="#CBD5E1" />
+      <stop offset="100%" stop-color="#94A3B8" />
+    </linearGradient>
+
+    <filter id="subtleGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.35" />
+    </filter>
+  </defs>
+
+  <!-- 14 Horizontal bands background -->
+  <g id="backgroundStripes">
+    <rect x="0" y="0.00" width="1000" height="72" fill="#545b6a" />
+    <rect x="0" y="71.43" width="1000" height="72" fill="#4b5261" />
+    <rect x="0" y="142.86" width="1000" height="72" fill="#424857" />
+    <rect x="0" y="214.29" width="1000" height="72" fill="#3a404e" />
+    <rect x="0" y="285.71" width="1000" height="72" fill="#323744" />
+    <rect x="0" y="357.14" width="1000" height="72" fill="#2b303c" />
+    <rect x="0" y="428.57" width="1000" height="72" fill="#242833" />
+    <rect x="0" y="500.00" width="1000" height="72" fill="#1e222b" />
+    <rect x="0" y="571.43" width="1000" height="72" fill="#181b23" />
+    <rect x="0" y="642.86" width="1000" height="72" fill="#14161d" />
+    <rect x="0" y="714.29" width="1000" height="72" fill="#101217" />
+    <rect x="0" y="785.71" width="1000" height="72" fill="#0c0d12" />
+    <rect x="0" y="857.14" width="1000" height="72" fill="#08090d" />
+    <rect x="0" y="928.57" width="1000" height="72" fill="#050608" />
+  </g>
+
+  <!-- Ventus 3-Pill Chevron Glyph -->
+  <g id="ventusChevron" transform="translate(170, 368) rotate(-45)" filter="url(#subtleGlow)">
+    <!-- Bar 1: Shortest Pill -->
+    <rect x="0" y="0" width="180" height="116" rx="30" ry="30" fill="url(#ventusBarGrad)" />
+    
+    <!-- Bar 2: Medium Pill -->
+    <rect x="0" y="144" width="360" height="116" rx="30" ry="30" fill="url(#ventusBarGrad)" />
+    
+    <!-- Bar 3: Longest Pill -->
+    <rect x="0" y="288" width="530" height="116" rx="30" ry="30" fill="url(#ventusBarGradLong)" />
+  </g>
+
+  <!-- VentusGPT Typography -->
+  <text 
+    id="ventusText" 
+    x="500" 
+    y="780" 
+    text-anchor="middle" 
+    font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" 
+    font-size="112" 
+    font-weight="800" 
+    letter-spacing="-2.5" 
+    fill="#FFFFFF"
+  >VentusGPT</text>
+</svg>

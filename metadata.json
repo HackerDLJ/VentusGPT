@@ -1,0 +1,11 @@
+{
+  "name": "VentusGPT",
+  "description": "A dedicated weather assistant. Its real-time meteorological core is online, monitoring atmospheric dynamics, barometric pressure gradients, convective storms, and optical sky patterns.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
