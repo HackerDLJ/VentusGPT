@@ -259,7 +259,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         </div>
 
         {/* Text Input Field */}
-        <div className="relative flex-1">
+        <div className="relative min-w-0 flex-1">
           <input
             type="text"
             value={inputText}
@@ -271,7 +271,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
                 ? "Ask VentusGPT anything or speak aloud..."
                 : "Ask VentusGPT anything in English or தமிழ்..."
             }
-            className="w-full bg-[#131314]/80 border border-white/5 focus:border-purple-500/60 rounded-xl sm:rounded-2xl px-3.5 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all shadow-inner"
+            className="w-full min-w-0 bg-[#131314]/80 border border-white/5 focus:border-purple-500/60 rounded-xl sm:rounded-2xl px-3.5 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all shadow-inner"
           />
         </div>
 
