@@ -90,12 +90,19 @@ npm start
 
 ## Versioning
 
-The current rebuild is targeting **v2.0.0**. The release is intentionally not tagged until the complete SIH demo flow has been tested and the production deployment is verified.
+**v2.0.0 is the current stable release.** The V2 rebuild has been merged into `main` and published as the `v2.0` release.
 
-- `main` = stable releases
-- `ventus-v2` = active v2.0 development branch
-- `v2.x` = incremental feature and quality releases
-- `v3.0` = future major product/architecture milestone
+- `main` = current stable V2 code
+- `ventus-v1` = preserved V1.0 code snapshot
+- `v1.0` = original V1.0 release/tag
+- `v2.0` = current V2.0 release/tag
+- `v3.x` = future major product/architecture work
+
+The historical V1.0 code is preserved and can be reproduced with:
+
+```bash
+git checkout v1.0
+```
 
 ## Team
 
