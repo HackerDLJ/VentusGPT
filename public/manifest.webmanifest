@@ -1,0 +1,19 @@
+{
+  "name": "VentusGPT · Weather Intelligence",
+  "short_name": "VentusGPT",
+  "description": "A conversational weather intelligence platform for forecasts, alerts, climate context, agriculture and multimodal AI.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#040b12",
+  "theme_color": "#06111c",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["weather", "productivity", "utilities", "education"]
+}
