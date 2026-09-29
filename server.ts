@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { evaluateArithmeticExpression } from "./src/services/safeCalculator";
 
 dotenv.config();
 
@@ -121,21 +122,14 @@ app.post("/api/tools/execute-code", async (req, res) => {
       return res.status(400).json({ error: "Expression is required" });
     }
 
-    let result: any;
+    let result: number | string;
     try {
-      // Safe sandbox for mathematical and basic JavaScript operations
-      const safeEval = new Function(
-        "Math",
-        "Date",
-        `"use strict"; return (${expression});`
-      );
-      result = safeEval(Math, Date);
-    } catch (evalErr: any) {
-      // Fallback to calculation & code logic
+      result = evaluateArithmeticExpression(expression);
+    } catch {
       const ai = getGeminiClient();
       const aiResponse = await ai.models.generateContent({
         model: "gemini-3.1-flash-lite",
-        contents: `Solve and execute this math/code request precisely. Return only the final computed result: "${expression}"`,
+        contents: `Solve this mathematical question precisely. Return only the final computed result: "${expression}"`,
       });
       result = aiResponse.text?.trim() || "Computation completed";
     }
@@ -495,7 +489,7 @@ const liveTools: any[] = [
       },
       {
         name: "executeCalculation",
-        description: "Calculate math formulas, compute unit conversions, or solve complex numeric logic.",
+        description: "Evaluate arithmetic formulas or solve numeric questions. The expression evaluator supports standard arithmetic, parentheses, pi, e, and common math functions.",
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -607,15 +601,14 @@ async function executeLiveTool(name: string, args: any): Promise<any> {
       return { answer: fallbackResp.text || "Information retrieved.", sources: [] };
     }
   } else if (name === "executeCalculation") {
-    let evalResult: any;
+    let evalResult: number | string;
     try {
-      const fn = new Function("Math", "Date", `"use strict"; return (${args?.expression});`);
-      evalResult = fn(Math, Date);
+      evalResult = evaluateArithmeticExpression(args?.expression);
     } catch {
       const calcAi = getGeminiClient();
       const calcResp = await calcAi.models.generateContent({
         model: "gemini-3.1-flash-lite",
-        contents: `Compute this: ${args?.expression}. Return only the numeric or succinct result.`,
+        contents: `Solve this mathematical question: ${args?.expression}. Return only the numeric or succinct result.`,
       });
       evalResult = calcResp.text?.trim();
     }
