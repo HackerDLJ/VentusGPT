@@ -1,160 +1,872 @@
-import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, BarChart3, Bot, Calculator, CloudRain, Compass, ExternalLink, Image as ImageIcon, Leaf, Loader2, MapPin, Menu, Mic, Search, Send, ShieldAlert, Sparkles, Thermometer, Volume2, Wind, X } from "lucide-react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Mic,
+  MicOff,
+  Volume2,
+  SlidersHorizontal,
+  AlertTriangle,
+  Languages,
+  RotateCcw,
+  Sparkles,
+} from "lucide-react";
+import { AudioOrb } from "./components/AudioOrb";
+import { VideoViewport } from "./components/VideoViewport";
+import { TranscriptView } from "./components/TranscriptView";
+import { ToolsPanel } from "./components/ToolsPanel";
+import { ControlBar } from "./components/ControlBar";
+import { SettingsModal } from "./components/SettingsModal";
+import { InnovationHubModal } from "./components/InnovationHubModal";
+import { VentusLogo } from "./components/VentusLogo";
+import { LogoModal } from "./components/LogoModal";
+import { LiveAudioManager } from "./services/liveAudio";
+import { LiveClient } from "./services/liveClient";
+import {
+  LiveStatus,
+  AssistantMode,
+  VentusVoice,
+  LiveSettings,
+  TranscriptItem,
+  NoteItem,
+  GeneratedImageItem,
+  WeatherData,
+} from "./types";
+import {
+  checkWeatherThresholds,
+  formatLiveCaptionAlert,
+} from "./services/weatherAlertService";
 
-type Weather = any;
-type Message = { role: "user" | "assistant"; text: string; sources?: { title: string; uri: string }[] };
+export default function App() {
+  const [status, setStatus] = useState<LiveStatus>("disconnected");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(true);
 
-type Page = "overview" | "chat" | "alerts" | "farmer" | "climate" | "nwp" | "studio";
+  // Audio states
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
+  const [userVolume, setUserVolume] = useState(0);
+  const [modelVolume, setModelVolume] = useState(0);
 
-const nav: { id: Page; label: string; icon: any }[] = [
-  { id: "overview", label: "Command Center", icon: Compass },
-  { id: "chat", label: "Ask VentusGPT", icon: Bot },
-  { id: "alerts", label: "Alert Center", icon: ShieldAlert },
-  { id: "farmer", label: "Farmer Mode", icon: Leaf },
-  { id: "climate", label: "Climate Explorer", icon: BarChart3 },
-  { id: "nwp", label: "NWP Lab", icon: Activity },
-  { id: "studio", label: "AI Studio", icon: Sparkles },
-];
+  // Tools & Video
+  const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [videoMode, setVideoMode] = useState<"none" | "camera" | "screen">("none");
+  const [mode, setMode] = useState<AssistantMode>("conversation");
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
 
-const quickQuestions = [
-  "Will it rain today?",
-  "Can I travel tomorrow?",
-  "Is it safe to spray pesticide?",
-  "Explain today's weather risk",
-];
+  // Transcripts & Live Captions
+  const [transcripts, setTranscripts] = useState<TranscriptItem[]>([]);
+  const [liveCaption, setLiveCaption] = useState<string | null>(null);
 
-async function jsonFetch(url: string, init?: RequestInit) {
-  const r = await fetch(url, init);
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error || `Request failed (${r.status})`);
-  return body;
-}
+  // Notes & Generated Images
+  const [notes, setNotes] = useState<NoteItem[]>([
+    {
+      id: "note-1",
+      title: "வணக்கம்! Welcome to VentusGPT",
+      content:
+        "தமிழில் பேசலாம் அல்லது தட்டச்சு செய்யலாம்! Ask: 'Search today top tech news' or 'ஒரு நல்ல திருக்குறள் சொல்' or 'Look at my camera'.",
+      category: "general",
+      timestamp: "Just now",
+    },
+  ]);
+  const [images, setImages] = useState<GeneratedImageItem[]>([]);
 
-function fmtDay(date: string, i: number) {
-  if (i === 0) return "TODAY";
-  return new Date(date).toLocaleDateString("en-IN", { weekday: "short" }).toUpperCase();
-}
+  // Settings: default with Tamil support ready
+  const [settings, setSettings] = useState<LiveSettings>({
+    model: "gemini-3.1-flash-live-preview",
+    voice: "Zephyr",
+    systemInstruction:
+      "You are VentusGPT, an intelligent, perceptive, articulate multimodal AI voice assistant created by Team JATABELS with native Tamil and English capabilities. When asked 'Who are you?' or about your identity, you must proudly state: 'I am VentusGPT, created by Team JATABELS.' When spoken to in Tamil, respond in natural, fluent, warm Tamil. When spoken to in English, respond in English. Keep answers direct and concise for voice conversations.",
+    targetLanguageCode: "ta", // Default to Tamil
+    fps: 1,
+  });
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isInnovationHubOpen, setIsInnovationHubOpen] = useState(false);
+  const [isLogoModalOpen, setIsLogoModalOpen] = useState(false);
 
-function App() {
-  const [page, setPage] = useState<Page>("overview");
-  const [location, setLocation] = useState("Chennai");
-  const [locationInput, setLocationInput] = useState("Chennai");
-  const [weather, setWeather] = useState<Weather | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [thinking, setThinking] = useState(false);
-  const [mobileNav, setMobileNav] = useState(false);
-  const [studioTool, setStudioTool] = useState("Research");
-  const [studioInput, setStudioInput] = useState("");
-  const [studioResult, setStudioResult] = useState("");
+  const isTamil = settings.targetLanguageCode === "ta";
 
-  const loadWeather = async (place = location) => {
-    setLoading(true); setError("");
-    try { setWeather(await jsonFetch(`/api/weather/forecast?location=${encodeURIComponent(place)}`)); }
-    catch (e: any) { setError(e.message || "Weather service unavailable"); }
-    finally { setLoading(false); }
-  };
+  // Audio Manager ref & Live Client ref
+  const audioManagerRef = useRef<LiveAudioManager | null>(null);
+  const liveClientRef = useRef<LiveClient | null>(null);
+  const currentModelTurnIdRef = useRef<string | null>(null);
 
-  useEffect(() => { loadWeather(); }, []);
+  // Verify health and API key on mount
+  useEffect(() => {
+    fetch("/api/health")
+      .then((res) => res.json())
+      .then((data) => {
+        setHasApiKey(Boolean(data.hasApiKey));
+      })
+      .catch((err) => console.error("Health check error:", err));
+  }, []);
 
-  const ask = async (text = input) => {
-    const q = text.trim(); if (!q || thinking) return;
-    const next = [...messages, { role: "user", text: q } as Message];
-    setMessages(next); setInput(""); setThinking(true); setPage("chat"); setError("");
-    try {
-      const out = await jsonFetch("/api/gemini/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: q, history: next, location, language: "auto" }) });
-      setWeather(out.weather || weather); setMessages([...next, { role: "assistant", text: out.text, sources: out.sources }]);
-    } catch (e: any) { setMessages([...next, { role: "assistant", text: `I couldn't reach the intelligence layer: ${e.message}` }]); }
-    finally { setThinking(false); }
-  };
-
-  const changeLocation = async () => {
-    const value = locationInput.trim(); if (!value) return;
-    setLocation(value); await loadWeather(value);
-  };
-
-  const alert = weather?.alert;
-  const current = weather?.current;
-  const days = weather?.daily || [];
-  const riskClass = alert?.severity === "WARNING" || alert?.severity === "OFFICIAL" ? "danger" : alert?.severity === "WATCH" ? "official-risk" : "";
-
-  const runStudio = async () => {
-    const q = studioInput.trim(); if (!q) return;
-    setStudioResult("");
-    try {
-      if (studioTool === "Research") {
-        const out = await jsonFetch("/api/tools/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }) });
-        setStudioResult(out.result || "No result.");
-      } else if (studioTool === "Calculate") {
-        const out = await jsonFetch("/api/tools/execute-code", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expression: q }) });
-        setStudioResult(out.result || "No result.");
-      } else {
-        setStudioResult(`${studioTool} is connected to the VentusGPT multimodal backend. Use the conversation workspace for contextual weather reasoning, or provide the required input here.`);
+  // Keyboard shortcut listener: Space to interrupt when speaking
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
       }
-    } catch (e: any) { setStudioResult(e.message || "Tool failed"); }
+      if (e.code === "Space") {
+        e.preventDefault();
+        handleInterrupt();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSpeaking, status]);
+
+  const addTranscript = useCallback(
+    (
+      role: "user" | "model" | "system" | "tool",
+      text: string,
+      extra?: Partial<TranscriptItem>
+    ) => {
+      const now = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      const newItem: TranscriptItem = {
+        id: "msg-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7),
+        role,
+        text,
+        timestamp: now,
+        ...extra,
+      };
+      setTranscripts((prev) => [...prev, newItem]);
+    },
+    []
+  );
+
+  // Stop session
+  const disconnectSession = useCallback(() => {
+    if (liveClientRef.current) {
+      liveClientRef.current.disconnect();
+      liveClientRef.current = null;
+    }
+    if (audioManagerRef.current) {
+      audioManagerRef.current.cleanup();
+      audioManagerRef.current = null;
+    }
+    setStatus("disconnected");
+    setIsSpeaking(false);
+    setIsListening(false);
+    setIsThinking(false);
+    setActiveTool(null);
+    setUserVolume(0);
+    setModelVolume(0);
+    setLiveCaption(null);
+  }, []);
+
+  // Connect to Gemini Live session
+  const connectSession = useCallback(async () => {
+    try {
+      setStatus("connecting");
+      setErrorMessage(null);
+
+      // Initialize Audio Manager
+      const audioManager = new LiveAudioManager();
+      audioManagerRef.current = audioManager;
+
+      await audioManager.ensureOutputContext(
+        (vol) => {
+          setModelVolume(vol);
+          if (vol > 0.05) {
+            setIsSpeaking(true);
+          }
+        },
+        () => {
+          setIsSpeaking(false);
+          setModelVolume(0);
+        }
+      );
+
+      // Initialize Live Client
+      const liveClient = new LiveClient({
+        onReady: () => {
+          setStatus("connected");
+          setErrorMessage(null);
+        },
+        onAudioChunk: (base64Pcm) => {
+          setIsThinking(false);
+          setIsSpeaking(true);
+          audioManager.queueAudioChunk(base64Pcm);
+        },
+        onModelText: (text) => {
+          setLiveCaption((prev) => (prev ? prev + " " + text : text));
+        },
+        onCaption: (caption) => {
+          setLiveCaption(caption);
+        },
+        onTurnComplete: () => {
+          setLiveCaption((prev) => {
+            if (prev) {
+              addTranscript("model", prev);
+            }
+            return null;
+          });
+          setIsSpeaking(false);
+          setIsThinking(false);
+          currentModelTurnIdRef.current = null;
+        },
+        onInterrupted: () => {
+          audioManager.interruptPlayback();
+          setIsSpeaking(false);
+          setLiveCaption(null);
+          currentModelTurnIdRef.current = null;
+        },
+        onToolInvoked: (tool) => {
+          setActiveTool(tool.name);
+          setIsThinking(true);
+        },
+        onToolResult: (toolResult) => {
+          setActiveTool(null);
+          setIsThinking(false);
+
+          if (toolResult.name === "saveNote" && toolResult.result?.success) {
+            const newNote: NoteItem = {
+              id: "note-" + Date.now(),
+              title: toolResult.result.title || "Voice Note",
+              content: toolResult.result.content || "",
+              category: toolResult.result.category || "general",
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            };
+            setNotes((prev) => [newNote, ...prev]);
+            addTranscript(
+              "tool",
+              `Saved note: "${newNote.title}" - ${newNote.content}`,
+              { toolName: "saveNote" }
+            );
+          } else if (toolResult.name === "searchWeb" && toolResult.result?.answer) {
+            addTranscript("tool", toolResult.result.answer, {
+              toolName: "Google Search",
+              sources: toolResult.result.sources || [],
+            });
+          } else if (toolResult.name === "generateImage" && toolResult.result?.imageUrl) {
+            const newImg: GeneratedImageItem = {
+              id: "img-" + Date.now(),
+              prompt: toolResult.result.prompt,
+              imageUrl: toolResult.result.imageUrl,
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            };
+            setImages((prev) => [newImg, ...prev]);
+            addTranscript(
+              "tool",
+              `Generated image for prompt: "${toolResult.result.prompt}"`,
+              {
+                toolName: "generateImage",
+                imageUrl: toolResult.result.imageUrl,
+              }
+            );
+          } else if (toolResult.name === "executeCalculation" && toolResult.result?.result) {
+            addTranscript(
+              "tool",
+              `Calculated result: ${toolResult.result.result}`,
+              { toolName: "executeCalculation" }
+            );
+          } else if (toolResult.name === "getWeatherForecast" && toolResult.result) {
+            const weather = toolResult.result as WeatherData;
+            // Proactive Alert Module: check weather data thresholds (e.g., wind speed > 40km/h)
+            const alert = checkWeatherThresholds(weather) || weather.alert;
+
+            if (alert && alert.active) {
+              const warningMessage = formatLiveCaptionAlert(
+                alert,
+                weather.location || "Local Area",
+                isTamil
+              );
+              // Notify the user via the liveCaption system immediately
+              setLiveCaption(warningMessage);
+
+              // Keep warning visible in caption stream
+              setTimeout(() => {
+                setLiveCaption((curr) => (curr === warningMessage ? null : curr));
+              }, 9000);
+            }
+
+            const weatherSummary =
+              weather.summary ||
+              `Weather for ${weather.location}: ${weather.temperature}°C, ${weather.condition}. Wind: ${weather.windSpeed} km/h (Gusts: ${weather.windGusts} km/h), Humidity: ${weather.humidity}%, Pressure: ${weather.barometricPressure}.${
+                alert && alert.active ? ` ⚠️ SEVERE ALERT: ${alert.title}` : ""
+              }`;
+
+            addTranscript("tool", weatherSummary, {
+              toolName: "getWeatherForecast",
+              toolResult: weather,
+            });
+          } else if (toolResult.name === "getAgriculturalAdvisory" && toolResult.result) {
+            const agri = toolResult.result;
+            const caption = isTamil
+              ? `🌾 வேளாண் ஆலோசனை (${agri.crop}): ${agri.decision === "PROCEED_SAFE" ? "பணி மேற்கொள்ளலாம்" : "பணியை ஒத்திவைக்கவும்"}`
+              : `🌾 Agri Advisory (${agri.crop}): ${agri.decision === "PROCEED_SAFE" ? "Safe to proceed" : "Halt & Postpone"}`;
+            setLiveCaption(caption);
+            setTimeout(() => {
+              setLiveCaption((curr) => (curr === caption ? null : curr));
+            }, 8000);
+            addTranscript("tool", `[Agrometeorological Advisory] ${agri.advice}`, {
+              toolName: "getAgriculturalAdvisory",
+              toolResult: agri,
+            });
+          } else if (toolResult.name === "getDisasterWarning" && toolResult.result) {
+            const disaster = toolResult.result;
+            const caption = isTamil
+              ? `🚨 ${disaster.severity} எச்சரிக்கை: ${disaster.location} (${disaster.windSpeedKmh} கி.மீ/மணி காற்று)`
+              : `🚨 ${disaster.severity} WARNING: ${disaster.location} (${disaster.windSpeedKmh} km/h wind)`;
+            setLiveCaption(caption);
+            setTimeout(() => {
+              setLiveCaption((curr) => (curr === caption ? null : curr));
+            }, 10000);
+            addTranscript("tool", `[Disaster Early Warning] ${disaster.headline}`, {
+              toolName: "getDisasterWarning",
+              toolResult: disaster,
+            });
+          }
+        },
+        onError: (errMsg) => {
+          console.error("Live session error:", errMsg);
+          setErrorMessage(errMsg);
+          setStatus("disconnected");
+          disconnectSession();
+        },
+        onClose: () => {
+          setStatus("disconnected");
+        },
+      });
+
+      liveClientRef.current = liveClient;
+
+      // System instruction with Tamil awareness and mode specialization
+      const targetModel =
+        mode === "translate" ? "gemini-3.5-transcribe-live" : settings.model;
+
+      let modeSpecificPrompt = "";
+      if (mode === "vision") {
+        modeSpecificPrompt = "Focus intently on visual analysis from camera frames, screen shares, and uploaded images. Describe objects, read text, identify visual cues, and debug UI or diagrams with high precision.";
+      } else if (mode === "translate") {
+        modeSpecificPrompt = "Act as an instantaneous real-time bidirectional translator between Tamil (தமிழ்) and English. When speech or text is received in one language, immediately speak the natural, fluent translation in the other language.";
+      } else if (mode === "code_math") {
+        modeSpecificPrompt = "Act as a software engineer and mathematical computation assistant. Use executeCalculation tool for math, formulas, and data analysis. Provide concise, clean, working code explanations.";
+      } else if (mode === "creative") {
+        modeSpecificPrompt = "Act as a creative studio director. Proactively offer to create visual concepts, generate AI images using generateImage tool, and craft compelling stories and creative ideas.";
+      }
+
+      const fullInstruction = `${settings.systemInstruction} ${modeSpecificPrompt} Current primary language preference: ${
+        settings.targetLanguageCode === "ta" ? "Tamil (தமிழ்)" : "English"
+      }. If the user speaks or writes in Tamil, respond in Tamil script.`;
+
+      await liveClient.connect({
+        model: targetModel,
+        voice: settings.voice,
+        systemInstruction: fullInstruction,
+        targetLanguageCode: settings.targetLanguageCode,
+      });
+
+      // Start microphone capture
+      try {
+        await audioManager.startMicrophone(
+          (base64Pcm) => {
+            if (liveClient.connected) {
+              liveClient.sendAudioChunk(base64Pcm);
+            }
+          },
+          (vol) => {
+            setUserVolume(vol);
+            setIsListening(vol > 0.08);
+          }
+        );
+      } catch (micErr: any) {
+        console.warn("Microphone access denied:", micErr);
+        setErrorMessage(
+          isTamil
+            ? "மைக் அணுகல் மறுக்கப்பட்டது. நீங்கள் உரை வழியாக பேசலாம்."
+            : "Microphone access was denied. You can continue chatting via text."
+        );
+      }
+    } catch (err: any) {
+      console.error("Failed to start Live session:", err);
+      setErrorMessage(err.message || "Failed to start VentusGPT Live.");
+      setStatus("disconnected");
+    }
+  }, [settings, mode, disconnectSession, addTranscript, isTamil]);
+
+  // Toggle Connect
+  const handleToggleConnect = () => {
+    if (status === "connected" || status === "connecting") {
+      disconnectSession();
+    } else {
+      connectSession();
+    }
   };
 
-  const content = useMemo(() => {
-    if (page === "chat") return <ChatView messages={messages} input={input} setInput={setInput} ask={ask} thinking={thinking} location={location} />;
-    if (page === "alerts") return <AlertsView weather={weather} />;
-    if (page === "farmer") return <FarmerView location={location} />;
-    if (page === "climate") return <ClimateView location={location} />;
-    if (page === "nwp") return <NwpView location={location} />;
-    if (page === "studio") return <StudioView tool={studioTool} setTool={setStudioTool} input={studioInput} setInput={setStudioInput} result={studioResult} run={runStudio} />;
-    return <Overview weather={weather} loading={loading} riskClass={riskClass} ask={ask} location={location} />;
-  }, [page, weather, loading, messages, input, thinking, location, studioTool, studioInput, studioResult]);
+  // Interrupt active speech
+  const handleInterrupt = () => {
+    if (audioManagerRef.current) {
+      audioManagerRef.current.interruptPlayback();
+    }
+    setIsSpeaking(false);
+    setLiveCaption(null);
+    currentModelTurnIdRef.current = null;
+    liveClientRef.current?.sendInterrupt();
+  };
+
+  // Toggle Mute
+  const handleToggleMute = () => {
+    if (audioManagerRef.current) {
+      const nextMute = !isMuted;
+      audioManagerRef.current.setMute(nextMute);
+      setIsMuted(nextMute);
+    }
+  };
+
+  // Toggle Camera View
+  const handleToggleCamera = () => {
+    setVideoMode((prev) => (prev === "camera" ? "none" : "camera"));
+  };
+
+  // Toggle Screen Share
+  const handleToggleScreen = () => {
+    setVideoMode((prev) => (prev === "screen" ? "none" : "screen"));
+  };
+
+  // Send Video Frame over LiveClient
+  const handleVideoFrame = (base64Jpeg: string) => {
+    if (liveClientRef.current?.connected) {
+      liveClientRef.current.sendVideoFrame(base64Jpeg);
+    }
+  };
+
+  // Send Text prompt: High-speed hybrid handling with optional image attachment
+  const handleSendTextMessage = async (text: string, imageBase64?: string) => {
+    addTranscript("user", text, {
+      userImage: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : undefined,
+    });
+
+    if (liveClientRef.current?.connected) {
+      if (imageBase64) {
+        liveClientRef.current.sendVideoFrame(imageBase64);
+      }
+      liveClientRef.current.sendTextMessage(text);
+      setIsThinking(true);
+    } else {
+      // Seamless direct VentusGPT chat without requiring Live WebSockets
+      setIsThinking(true);
+      try {
+        const history = transcripts.slice(-6).map((t) => ({
+          role: t.role === "user" ? "user" : "model",
+          text: t.text,
+        }));
+
+        const res = await fetch("/api/gemini/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: text,
+            imageBase64,
+            language: settings.targetLanguageCode,
+            voice: settings.voice,
+            history,
+            generateAudio: false,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.text) {
+          addTranscript("model", data.text, {
+            sources: data.sources || [],
+            audio: data.audio || undefined,
+          });
+        } else if (data.error) {
+          addTranscript("system", "Error: " + data.error);
+        }
+      } catch (err: any) {
+        console.error("Chat error:", err);
+        addTranscript(
+          "system",
+          isTamil
+            ? "மன்னிக்கவும், தகவல் தொடர்பில் சிக்கல் ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்."
+            : "Network error sending prompt. Please try again."
+        );
+      } finally {
+        setIsThinking(false);
+      }
+    }
+  };
+
+  // Play audio for any message on demand
+  const handlePlayAudio = async (text: string) => {
+    try {
+      if (!audioManagerRef.current) {
+        audioManagerRef.current = new LiveAudioManager();
+      }
+      await audioManagerRef.current.ensureOutputContext(
+        (vol) => {
+          setModelVolume(vol);
+          setIsSpeaking(vol > 0.05);
+        },
+        () => {
+          setIsSpeaking(false);
+          setModelVolume(0);
+        }
+      );
+
+      const res = await fetch("/api/gemini/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          voice: settings.voice,
+          language: settings.targetLanguageCode,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.audio && audioManagerRef.current) {
+        setIsSpeaking(true);
+        audioManagerRef.current.queueAudioChunk(data.audio);
+      } else if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        if (isTamil) utterance.lang = "ta-IN";
+        utterance.onstart = () => setIsSpeaking(true);
+        utterance.onend = () => setIsSpeaking(false);
+        utterance.onerror = () => setIsSpeaking(false);
+        window.speechSynthesis.speak(utterance);
+      }
+    } catch (e) {
+      console.error("Audio playback error:", e);
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        if (isTamil) utterance.lang = "ta-IN";
+        utterance.onstart = () => setIsSpeaking(true);
+        utterance.onend = () => setIsSpeaking(false);
+        utterance.onerror = () => setIsSpeaking(false);
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+  };
+
+  // Toggle Tamil mode
+  const handleToggleTamil = () => {
+    setSettings((prev) => ({
+      ...prev,
+      targetLanguageCode: prev.targetLanguageCode === "ta" ? "en" : "ta",
+    }));
+  };
+
+  // Manual Image Generation
+  const handleGenerateImageManual = async (prompt: string) => {
+    setIsGeneratingImage(true);
+    try {
+      const res = await fetch("/api/gemini/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await res.json();
+      if (data.imageUrl) {
+        const newImg: GeneratedImageItem = {
+          id: "img-" + Date.now(),
+          prompt,
+          imageUrl: data.imageUrl,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        };
+        setImages((prev) => [newImg, ...prev]);
+        addTranscript("model", `Created image for: "${prompt}"`, {
+          imageUrl: data.imageUrl,
+        });
+      }
+    } catch (err: any) {
+      console.error("Image generation error:", err);
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Open navigation">{mobileNav ? <X /> : <Menu />}</button>
-        <div className="brand"><img src="/favicon.svg" alt="VentusGPT" /><div><b>Ventus<span>GPT</span></b><small>WEATHER INTELLIGENCE</small></div></div>
-        <div className="location"><MapPin size={14}/><input value={locationInput} onChange={e => setLocationInput(e.target.value)} onKeyDown={e => e.key === "Enter" && changeLocation()} placeholder="Search a city or district"/><button onClick={changeLocation}><Search size={15}/></button></div>
-        <div className="top-actions"><span className="live"><i/> LIVE DATA</span><button onClick={() => loadWeather()} aria-label="Refresh weather"><Activity size={17}/></button></div>
+    <div className="min-h-screen bg-[#131314] text-slate-100 flex flex-col antialiased selection:bg-purple-600 selection:text-white font-sans">
+      {/* VentusGPT Top Header */}
+      <header className="h-16 border-b border-white/5 bg-[#131314]/90 backdrop-blur-xl px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40">
+        <div className="flex items-center gap-3">
+          {/* VentusGPT brand mark */}
+          <button
+            onClick={() => setIsLogoModalOpen(true)}
+            className="group relative flex items-center justify-center focus:outline-none transition-transform hover:scale-105 active:scale-95"
+            title={isTamil ? "முழு திட்ட லோகோவைக் காண்க" : "Click to view full VentusGPT project logo"}
+          >
+            <VentusLogo size={36} />
+            <span className="sr-only">VentusGPT Full Logo</span>
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-semibold tracking-tight text-white flex items-center gap-1.5">
+                <span>VentusGPT</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-950/60 border border-purple-500/30 text-purple-300 font-medium">
+                  by Team JATABELS
+                </span>
+              </h1>
+            </div>
+            <p className="text-[11px] text-slate-400 hidden sm:block">
+              {isTamil ? "Team JATABELS உருவாக்கிய AI குரல் உதவியாளர்" : "AI Voice & Weather Intelligence by Team JATABELS"}
+            </p>
+          </div>
+        </div>
+
+        {/* Right Header Controls */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Quick Tamil / English pill */}
+          <button
+            onClick={handleToggleTamil}
+            title={isTamil ? "Switch to English" : "தமிழுக்கு மாற்றவும்"}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+              isTamil
+                ? "bg-purple-900/40 border-purple-500/50 text-purple-200"
+                : "bg-white/5 border-white/10 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Languages className="w-3.5 h-3.5 text-purple-400" />
+            <span>{isTamil ? "தமிழ் (Tamil)" : "English"}</span>
+          </button>
+
+          {/* Connection Status Indicator */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1e1f20] border border-white/10 text-xs">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                status === "connected"
+                  ? "bg-emerald-400 animate-pulse shadow-sm shadow-emerald-400"
+                  : status === "connecting"
+                  ? "bg-amber-400 animate-ping"
+                  : "bg-slate-500"
+              }`}
+            />
+            <span className="text-[11px] font-medium text-slate-300">
+              {status === "connected"
+                ? isTamil
+                  ? "நேரலை இயங்குகிறது"
+                  : "Live Active"
+                : status === "connecting"
+                ? isTamil
+                  ? "இணைக்கிறது..."
+                  : "Connecting..."
+                : isTamil
+                ? "தயார்"
+                : "Ready"}
+            </span>
+          </div>
+
+          {/* Mute toggle if connected */}
+          {status === "connected" && (
+            <button
+              onClick={handleToggleMute}
+              title={isMuted ? "Unmute" : "Mute"}
+              className={`p-2 rounded-full border text-xs transition-all ${
+                isMuted
+                  ? "bg-red-950/60 border-red-800 text-red-300"
+                  : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
+              }`}
+            >
+              {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+          )}
+
+          {/* Settings button */}
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 rounded-full bg-[#1e1f20] border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors"
+            title="Open Assistant Settings"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+          </button>
+
+          {/* Innovation & Flagship Architecture Hub Button */}
+          <button
+            onClick={() => setIsInnovationHubOpen(true)}
+            className="px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-emerald-950/70 via-purple-950/60 to-blue-950/70 border border-emerald-500/40 text-emerald-200 hover:border-emerald-400 hover:shadow-lg hover:shadow-emerald-900/30 transition-all flex items-center gap-1.5 group"
+            title="Open Innovation & Flagship Architecture Hub (Agricultural Advisory & Disaster Early Warning)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400 group-hover:rotate-12 transition-transform" />
+            <span className="hidden md:inline">
+              {isTamil ? "🚀 புதுமை மையம்" : "🚀 Innovation Hub"}
+            </span>
+            <span className="md:hidden">🚀 Hub</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono hidden sm:inline">
+              Agri+Disaster
+            </span>
+          </button>
+        </div>
       </header>
-      <div className="shell">
-        <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
-          <div className="nav-title">VENTUS INTELLIGENCE</div>
-          <nav className="nav-list">{nav.map(n => { const I = n.icon; return <button key={n.id} className={`nav ${page === n.id ? "active" : ""}`} onClick={() => { setPage(n.id); setMobileNav(false); }}><I/><span>{n.label}</span></button>; })}</nav>
-          <div className="sidebar-status"><div><span className="status-dot"/> SYSTEM ONLINE</div><small>Forecast · AI · NWP routing active</small></div>
-          <div className="sidebar-bottom"><img src="/branding/ventus-wordmark.svg" alt="VentusGPT"/><span>Conversational weather intelligence for citizens, farmers and disaster awareness.</span><em>SIH26068 · v2.0</em></div>
-        </aside>
-        <main className="main">{error && <div className="error"><AlertTriangle size={15}/>{error}<button onClick={() => setError("")}><X size={14}/></button></div>}{content}</main>
-      </div>
+
+      {/* Error notification banner if any */}
+      {errorMessage && (
+        <div className="bg-red-950/70 border-b border-red-800/40 px-4 py-2 text-xs text-red-200 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            onClick={() => setErrorMessage(null)}
+            className="text-red-400 hover:text-red-200 text-xs font-semibold underline ml-4"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Main Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 overflow-hidden">
+        {/* Left Column: VentusGPT Stage & Controls (7 cols on desktop) */}
+        <div className="lg:col-span-7 flex flex-col gap-4">
+          {/* Main Visualizer Stage */}
+          <div className="flex-1 min-h-[380px] sm:min-h-[440px] bg-[#1e1f20]/60 rounded-3xl border border-white/10 backdrop-blur-2xl relative overflow-hidden flex flex-col items-center justify-center p-6 shadow-2xl">
+            {/* Ambient Cosmic Lights */}
+            <div className="absolute top-1/4 left-1/4 w-80 h-80 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
+
+            {/* Video Picture-in-Picture or Split View Overlay */}
+            {videoMode !== "none" && (
+              <div className="w-full mb-4">
+                <VideoViewport
+                  mode={videoMode}
+                  onFrame={handleVideoFrame}
+                  onClose={() => setVideoMode("none")}
+                  fps={settings.fps}
+                />
+              </div>
+            )}
+
+            {/* Glowing VentusGPT Audio Reactive Orb */}
+            <AudioOrb
+              status={status}
+              isListening={isListening}
+              isSpeaking={isSpeaking}
+              isThinking={isThinking}
+              activeTool={activeTool}
+              userVolume={userVolume}
+              modelVolume={modelVolume}
+              isTamil={isTamil}
+              onClick={handleToggleConnect}
+            />
+
+            {/* Subtitle Banner */}
+            <div className="w-full max-w-lg mt-4 min-h-[44px] flex items-center justify-center text-center px-4">
+              {liveCaption ? (
+                <div className="bg-[#131314]/90 border border-purple-500/40 px-4 py-2 rounded-2xl text-xs sm:text-sm text-purple-200 backdrop-blur-md shadow-lg">
+                  <span className="text-[10px] uppercase font-bold text-purple-400 block mb-0.5">
+                    {isTamil ? "நேரலை வசனம்" : "VentusGPT"}
+                  </span>
+                  "{liveCaption}"
+                </div>
+              ) : status === "connected" ? (
+                <p className="text-xs text-slate-400 italic">
+                  {isTamil
+                    ? "மைக் வழியாக தமிழில் பேசுங்கள் அல்லது கேமரா/ஸ்கிரீன் பகிருங்கள்..."
+                    : "Speak into your microphone or ask VentusGPT to look at your screen..."}
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400">
+                  {isTamil
+                    ? "நேரலை உரையாடலைத் தொடங்க நடுவில் உள்ள உருண்டையைத் தட்டவும்"
+                    : "Click the orb or mic to connect VentusGPT"}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Control Bar */}
+          <ControlBar
+            status={status}
+            onToggleConnect={handleToggleConnect}
+            isMuted={isMuted}
+            onToggleMute={handleToggleMute}
+            videoMode={videoMode}
+            onToggleCamera={handleToggleCamera}
+            onToggleScreen={handleToggleScreen}
+            onInterrupt={handleInterrupt}
+            isSpeaking={isSpeaking}
+            selectedVoice={settings.voice}
+            onSelectVoice={(v) => setSettings({ ...settings, voice: v })}
+            mode={mode}
+            onSelectMode={(m) => setMode(m)}
+            onSendTextMessage={handleSendTextMessage}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            isTamil={isTamil}
+            onToggleTamil={handleToggleTamil}
+          />
+        </div>
+
+        {/* Right Column: Transcript Stream & Tools Panel (5 cols on desktop) */}
+        <div className="lg:col-span-5 flex flex-col gap-4 min-h-[500px]">
+          {/* Upper half: Conversation Feed */}
+          <div className="flex-1 min-h-[340px]">
+            <TranscriptView
+              transcripts={transcripts}
+              liveCaption={liveCaption}
+              onClear={() => setTranscripts([])}
+              onPlayAudio={handlePlayAudio}
+              onSelectPrompt={handleSendTextMessage}
+              isTamil={isTamil}
+            />
+          </div>
+
+          {/* Lower half: Tools & Memory Board */}
+          <div className="h-72">
+            <ToolsPanel
+              notes={notes}
+              images={images}
+              onDeleteNote={(id) => setNotes((prev) => prev.filter((n) => n.id !== id))}
+              onSendPrompt={handleSendTextMessage}
+              onGenerateImageManual={handleGenerateImageManual}
+              isGeneratingImage={isGeneratingImage}
+              isTamil={isTamil}
+              onOpenInnovationHub={() => setIsInnovationHubOpen(true)}
+            />
+          </div>
+        </div>
+      </main>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        onSaveSettings={(newSettings) => setSettings(newSettings)}
+        isConnected={status === "connected"}
+        hasApiKey={hasApiKey}
+      />
+
+      {/* Flagship Innovation & Architecture Hub Modal */}
+      <InnovationHubModal
+        isOpen={isInnovationHubOpen}
+        onClose={() => setIsInnovationHubOpen(false)}
+        isTamil={isTamil}
+        onTriggerLiveAlert={(alertText) => {
+          setLiveCaption(alertText);
+          setTimeout(() => {
+            setLiveCaption((curr) => (curr === alertText ? null : curr));
+          }, 9000);
+        }}
+        onSendToVoiceStream={(text) => handleSendTextMessage(text)}
+      />
+
+      {/* Official Project Full Logo Modal */}
+      <LogoModal
+        isOpen={isLogoModalOpen}
+        onClose={() => setIsLogoModalOpen(false)}
+        isTamil={isTamil}
+      />
     </div>
   );
 }
-
-function Overview({ weather, loading, riskClass, ask, location }: any) {
-  const c = weather?.current; const days = weather?.daily || []; const alert = weather?.alert;
-  if (loading && !weather) return <div className="page"><div className="panel" style={{padding:40,textAlign:"center"}}><Loader2 className="spin"/> Loading weather intelligence…</div></div>;
-  return <div className="page">
-    <div className="page-intro"><div><div className="eyebrow">COMMAND CENTER / {weather?.location || location}</div><h1>Know the sky.<br/><span>Make the decision.</span></h1><p>One conversational layer across live conditions, forecasts, numerical models, official warnings and practical weather decisions.</p></div><button className="outline" onClick={() => ask("Explain the most important weather decision for me today")}>Ask VentusGPT <Sparkles size={13}/></button></div>
-    <div className="signal-strip"><div><span className="signal-live"/><b>LIVE</b><span>{weather?.provider?.name || "Weather provider"}</span></div><div className={alert?.official ? "official" : "model"}><AlertTriangle size={13}/><b>{alert?.official ? "OFFICIAL" : "MODEL"}</b><span>{alert?.title || "No elevated risk"}</span></div><div><b>MODEL</b><span>{weather?.provider?.model || "NWP"}</span></div><div><b>UPDATED</b><span>{weather?.provider?.updatedAt ? new Date(weather.provider.updatedAt).toLocaleTimeString("en-IN", {hour:"2-digit",minute:"2-digit"}) : "now"}</span></div></div>
-    <div className="hero-grid"><section className="panel hero"><div className="eyebrow"><i/> CURRENT CONDITIONS</div><div className="hero-main"><div><div className="temp">{Math.round(c?.temperature ?? 0)}°</div><h2>{c?.condition || "Loading"}</h2><p>Feels like {Math.round(c?.feelsLike ?? 0)}° · {weather?.location}</p></div><div className="hero-mark"><CloudRain size={55}/><span>ATMOSPHERE</span></div></div><div className="metrics"><Metric icon={<Thermometer/>} label="FEELS LIKE" value={`${Math.round(c?.feelsLike ?? 0)}°C`}/><Metric icon={<CloudRain/>} label="HUMIDITY" value={`${c?.humidity ?? "—"}%`}/><Metric icon={<Wind/>} label="WIND" value={`${Math.round(c?.windSpeed ?? 0)} km/h`}/><Metric icon={<Activity/>} label="PRESSURE" value={`${Math.round(c?.pressure ?? 0)} hPa`}/></div></section><section className={`panel risk ${riskClass}`}><div className="risk-label"><span>{alert?.official ? "OFFICIAL ALERT" : "RISK INTELLIGENCE"}</span><span>{alert?.severity || "NORMAL"}</span></div><h2>{alert?.title || "No elevated model signal"}</h2><p>{alert?.description || "Current forecast data shows no significant hazard signal. VentusGPT continues to monitor the forecast context."}</p><div className="risk-advice">{alert?.actionAdvice || "Continue normal planning and check official updates when conditions are important."}</div><small>Source: {alert?.source || weather?.provider?.name || "Weather model"}</small></section></div>
-    <div className="decision-row"><Decision icon={<CloudRain/>} label="RAIN CHANCE" value={`${days[0]?.precipitationProbability ?? 0}%`} note="today"/><Decision icon={<Wind/>} label="WIND GUST" value={`${Math.round(c?.windGusts ?? 0)} km/h`} note={c?.windGusts >= 40 ? "elevated" : "normal"}/><Decision icon={<Activity/>} label="UV INDEX" value={`${days[0]?.uv ?? "—"}`} note="peak"/><Decision icon={<Leaf/>} label="FIELD SIGNAL" value={days[0]?.precipitationProbability > 60 ? "WAIT" : "CHECK"} note="agriculture"/></div>
-    <div className="section-title"><div><div className="eyebrow">NEXT 7 DAYS</div><h2>Forecast timeline</h2></div><span className="rain-peak">Rain peak · {Math.max(...days.map((d:any) => d.precipitationProbability || 0), 0)}%</span></div>
-    <div className="forecast">{days.map((d:any,i:number)=><div className={`day ${i===0?"today":""}`} key={d.date}><span>{fmtDay(d.date,i)}</span><CloudRain/><strong>{Math.round(d.max)}° <em>{Math.round(d.min)}°</em></strong><small>{d.condition}</small><label>{d.precipitationProbability}% rain</label><div className="rain-bar"><i style={{width:`${Math.min(100,d.precipitationProbability||0)}%`}}/></div></div>)}</div>
-    <div className="lower-grid"><section className="panel map-card"><div className="card-head"><div><div className="eyebrow">LOCATION CONTEXT</div><h2>{weather?.location}</h2></div><span className="coord">{weather?.coordinates?.latitude?.toFixed?.(3)}, {weather?.coordinates?.longitude?.toFixed?.(3)}</span></div>{weather?.coordinates ? <iframe title="location map" src={`https://www.openstreetmap.org/export/embed.html?bbox=${weather.coordinates.longitude-0.08}%2C${weather.coordinates.latitude-0.05}%2C${weather.coordinates.longitude+0.08}%2C${weather.coordinates.latitude+0.05}&layer=mapnik&marker=${weather.coordinates.latitude}%2C${weather.coordinates.longitude}`}/> : <div className="map-empty">Location context unavailable</div>}<div className="map-foot"><MapPin size={11}/> Weather context is centered on the selected location.</div></section><section className="panel ask-card"><div className="eyebrow">CONVERSATIONAL LAYER</div><h2>Ask anything.</h2><p>Weather facts are grounded in the live forecast. Ask follow-ups naturally and VentusGPT keeps the context.</p><div className="quick">{quickQuestions.map(q=><button key={q} onClick={()=>ask(q)}>{q}<Send size={12}/></button>)}</div></section></div>
-    <div className="source-row"><b>PROVENANCE</b><span>{weather?.provider?.name}</span><span>{weather?.provider?.model}</span><span className="green">● Live forecast</span><span>Official warnings are shown separately when available.</span></div>
-  </div>;
-}
-
-function Metric({icon,label,value}:any){return <div className="metric">{icon}<div><small>{label}</small><b>{value}</b></div></div>}
-function Decision({icon,label,value,note}:any){return <div className="panel decision"><div className="decision-icon">{icon}</div><div><span>{label}</span><b>{value}</b><small>{note}</small></div></div>}
-
-function ChatView({messages,input,setInput,ask,thinking,location}:any){return <div className="chat"><div className="chat-head"><div><div className="eyebrow">CONVERSATION / {location.toUpperCase()}</div><h1>Talk to <span style={{color:"var(--cyan)"}}>VentusGPT.</span></h1><p>Weather-grounded conversation with context across forecasts, risk and decisions.</p></div><span className="grounded">● WEATHER GROUNDED</span></div><div className="messages">{messages.length===0&&<div className="panel" style={{padding:24,marginTop:20}}><div className="eyebrow">START HERE</div><h2 style={{fontFamily:"Space Grotesk"}}>What do you need to know?</h2><div className="quick">{quickQuestions.map((q:string)=><button key={q} onClick={()=>ask(q)}>{q}<Send size={12}/></button>)}</div></div>}{messages.map((m:Message,i:number)=><div className={`message ${m.role}`} key={i}><div className="avatar">{m.role==="user"?"YOU":<img src="/favicon.svg" alt="V"/>}</div><div><div className="bubble"><p>{m.text}</p></div>{m.sources?.length?<div className="sources">{m.sources.map(s=><a key={s.uri} href={s.uri} target="_blank" rel="noreferrer">{s.title}<ExternalLink size={8}/></a>)}</div>:null}{m.role==="assistant"&&<button className="read" onClick={()=>window.speechSynthesis?.speak(new SpeechSynthesisUtterance(m.text))}><Volume2 size={11}/> Read aloud</button>}</div></div>)}{thinking&&<div className="message"><div className="avatar"><img src="/favicon.svg" alt="V"/></div><div className="typing">VentusGPT is reasoning <span/><span/><span/></div></div>}</div><form className="composer" onSubmit={e=>{e.preventDefault();ask()}}><button type="button" className="mic" onClick={()=>window.speechSynthesis && alert("Use Live Voice from the AI Studio for continuous voice conversation.")}><Mic size={17}/></button><input value={input} onChange={e=>setInput(e.target.value)} placeholder="Ask about weather, travel, farming, climate…"/><button className="send" type="submit"><Send size={17}/></button></form></div>}
-
-function AlertsView({weather}:any){const a=weather?.alert;return <div className="page"><div className="page-intro"><div><div className="eyebrow">SAFETY / ALERT CENTER</div><h1>Signal, source, <span>action.</span></h1><p>VentusGPT keeps numerical-model signals separate from official meteorological warnings.</p></div></div><section className={`panel risk ${a?.official?"official-risk":a?.active?"danger":""}`} style={{maxWidth:850}}><div className="risk-label"><span>{a?.official?"OFFICIAL SOURCE":"MODEL SIGNAL"}</span><span>{a?.severity||"NORMAL"}</span></div><h2>{a?.title||"No elevated signal"}</h2><p>{a?.description||"No elevated hazard signal is currently detected."}</p><div className="risk-advice">{a?.actionAdvice||"Continue normal planning."}</div><small>Source: {a?.source||"NWP model"}</small></section><div className="signal-strip" style={{marginTop:14}}><div><b>LOCATION</b><span>{weather?.location}</span></div><div><b>STATUS</b><span>{a?.active?"Active signal":"Monitoring"}</span></div><div><b>AUTHORITY</b><span>{a?.official?"IMD":"Not official"}</span></div><div><b>RULE</b><span>Verify critical warnings</span></div></div></div>}
-
-function FarmerView({location}:any){const [crop,setCrop]=useState("Paddy"),[activity,setActivity]=useState("Pesticide spraying"),[out,setOut]=useState<any>(null),[busy,setBusy]=useState(false);const run=async()=>{setBusy(true);try{setOut(await jsonFetch("/api/advisory/agri",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({location,crop,activity})}))}catch(e:any){setOut({error:e.message})}finally{setBusy(false)}};return <div className="page"><div className="page-intro"><div><div className="eyebrow">DECISION SUPPORT / AGRICULTURE</div><h1>Field decisions, <span>grounded.</span></h1><p>Combine crop activity with forecast conditions to decide whether to proceed, postpone or verify.</p></div></div><div className="panel" style={{padding:22,maxWidth:850}}><div className="quick" style={{gridTemplateColumns:"1fr 1fr"}}><label style={{fontSize:9,color:"#66809a"}}>CROP<select value={crop} onChange={e=>setCrop(e.target.value)} style={{display:"block",width:"100%",marginTop:7,padding:10,background:"#091725",color:"#d9e8f5",border:"1px solid #ffffff12",borderRadius:9}}><option>Paddy</option><option>Banana</option><option>Groundnut</option><option>Tomato</option><option>Cotton</option></select></label><label style={{fontSize:9,color:"#66809a"}}>ACTIVITY<select value={activity} onChange={e=>setActivity(e.target.value)} style={{display:"block",width:"100%",marginTop:7,padding:10,background:"#091725",color:"#d9e8f5",border:"1px solid #ffffff12",borderRadius:9}}><option>Pesticide spraying</option><option>Irrigation</option><option>Fertilizer application</option><option>Harvesting</option></select></label></div><button className="outline" style={{marginTop:14}} onClick={run}>{busy?<Loader2 className="spin"/>:<Leaf size={14}/>} Analyze conditions</button></div>{out&&<section className={`panel risk ${out.decision==="HALT_POSTPONE"?"danger":""}`} style={{maxWidth:850,marginTop:14}}><div className="risk-label"><span>FIELD ADVISORY</span><span>{out.decision}</span></div><h2>{out.advice}</h2><p>{out.crop} · {out.activity} · {out.location}</p><div className="decision-row" style={{gridTemplateColumns:"1fr 1fr"}}><Decision icon={<CloudRain/>} label="RAIN PROBABILITY" value={`${out.rainfallProbability}%`} note="today"/><Decision icon={<Wind/>} label="WIND" value={`${out.windSpeedKmh} km/h`} note="forecast"/></div></section>}</div>}
-
-function ClimateView({location}:any){const [data,setData]=useState<any>(null);useEffect(()=>{jsonFetch(`/api/climate/trend?location=${encodeURIComponent(location)}`).then(setData).catch(()=>setData(null))},[location]);return <div className="page"><div className="page-intro"><div><div className="eyebrow">HISTORICAL CONTEXT / 10 YEARS</div><h1>Climate, <span>not guesswork.</span></h1><p>Historical context helps explain trends. It is not a forecast.</p></div></div><section className="panel" style={{padding:22}}>{!data?<Loader2 className="spin"/>:<div>{data.years.map((y:any)=><div key={y.year} style={{display:"grid",gridTemplateColumns:"70px 1fr 110px 110px",gap:12,alignItems:"center",padding:"10px 0",borderBottom:"1px solid #ffffff09",fontSize:9}}><b>{y.year}</b><div className="rain-bar" style={{width:"100%"}}><i style={{width:`${Math.min(100,y.rainfall/15)}%`}}/></div><span>{y.rainfall} mm rain</span><span>{y.meanTemperature}°C avg</span></div>)}</div>}</section></div>}
-
-function NwpView({location}:any){const [data,setData]=useState<any>(null);useEffect(()=>{jsonFetch(`/api/nwp/gfs?location=${encodeURIComponent(location)}&hours=48`).then(setData).catch(()=>setData(null))},[location]);return <div className="page"><div className="page-intro"><div><div className="eyebrow">NUMERICAL WEATHER PREDICTION</div><h1>Inside the <span>model.</span></h1><p>Inspect model output separately from official warnings. This is evidence, not authority.</p></div></div><section className="panel" style={{padding:22}}>{!data?<Loader2 className="spin"/>:<><div className="signal-strip">{Object.entries(data).slice(0,4).map(([k,v]:any)=><div key={k}><b>{k.toUpperCase()}</b><span>{typeof v==="object"?"available":String(v)}</span></div>)}</div><pre style={{whiteSpace:"pre-wrap",color:"#8da5bd",fontSize:9,lineHeight:1.6,overflow:"auto"}}>{JSON.stringify(data,null,2).slice(0,7000)}</pre></>}</section></div>}
-
-function StudioView({tool,setTool,input,setInput,result,run}:any){const tools=[{name:"Research",icon:Search,placeholder:"Ask a current factual question…"},{name:"Calculate",icon:Calculator,placeholder:"Enter an expression or math problem…"},{name:"Vision",icon:ImageIcon,placeholder:"Describe what you want to analyze…"},{name:"Create",icon:Sparkles,placeholder:"Describe an image you want to create…"}];const current=tools.find(x=>x.name===tool)||tools[0];return <div className="page"><div className="page-intro"><div><div className="eyebrow">MULTIMODAL WORKSPACE</div><h1>AI <span>Studio.</span></h1><p>Research, calculate, inspect and create while staying inside the VentusGPT ecosystem.</p></div></div><div className="decision-row" style={{gridTemplateColumns:"repeat(4,1fr)"}}>{tools.map(t=>{const I=t.icon;return <button className="panel decision" key={t.name} onClick={()=>setTool(t.name)} style={{color:tool===t.name?"#dff7ff":"#8fa5bb",borderColor:tool===t.name?"#55c8ef44":"#ffffff0d"}}><div className="decision-icon"><I/></div><div><span>TOOL</span><b>{t.name}</b><small>{tool===t.name?"ACTIVE":"OPEN"}</small></div></button>})}</div><section className="panel" style={{padding:22,marginTop:14,maxWidth:900}}><div className="eyebrow">{tool.toUpperCase()}</div><h2 style={{fontFamily:"Space Grotesk",fontSize:25,margin:"8px 0"}}>{current.placeholder}</h2><div className="composer" style={{marginTop:18}}><input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&run()} placeholder={current.placeholder}/><button className="send" onClick={run}><Send size={16}/></button></div>{result&&<div className="bubble" style={{marginTop:18}}><p>{result}</p></div>}</section></div>}
-
-export default App;
