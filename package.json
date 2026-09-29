@@ -1,13 +1,14 @@
 {
   "name": "ventusgpt",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 & tsx server-v3.ts",
-    "build": "vite build && esbuild server-v3.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=dist/server.mjs",
-    "start": "node dist/server.mjs",
-    "preview": "vite preview",
+    "dev": "bash scripts/dev.sh",
+    "dev:frontend": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "start": "python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000",
+    "preview": "vite preview --host 0.0.0.0",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
   },
