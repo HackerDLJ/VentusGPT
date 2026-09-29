@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <radialGradient id="g" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(860 80) rotate(130) scale(760 650)">
+      <stop stop-color="#174A68"/>
+      <stop offset="1" stop-color="#040B12"/>
+    </radialGradient>
+    <linearGradient id="a" x1="240" y1="230" x2="1000" y2="500" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#55C8EF"/>
+      <stop offset="1" stop-color="#62DFB0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" rx="36" fill="#040B12"/>
+  <rect width="1200" height="630" rx="36" fill="url(#g)" opacity=".78"/>
+  <circle cx="930" cy="110" r="210" fill="#55C8EF" opacity=".055"/>
+  <circle cx="1020" cy="540" r="260" fill="#62DFB0" opacity=".045"/>
+  <g transform="translate(100 100)">
+    <rect width="74" height="74" rx="22" fill="#0B1D2C" stroke="#55C8EF" stroke-opacity=".32"/>
+    <path d="M24 48L39 26L51 42L58 30" stroke="url(#a)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="24" cy="48" r="5" fill="#62DFB0"/>
+  </g>
+  <text x="100" y="290" fill="#EAF6FF" font-family="Arial, Helvetica, sans-serif" font-size="82" font-weight="700" letter-spacing="-4">Ventus<tspan fill="#55C8EF">GPT</tspan></text>
+  <text x="105" y="350" fill="#8FA9C0" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="5">WEATHER INTELLIGENCE</text>
+  <text x="105" y="425" fill="#C7D8E8" font-family="Arial, Helvetica, sans-serif" font-size="31">Talk to the atmosphere. Understand the risk.</text>
+  <text x="105" y="475" fill="#6F879F" font-family="Arial, Helvetica, sans-serif" font-size="19">Forecasts · Alerts · Climate · Agriculture · Multimodal AI</text>
+  <rect x="105" y="525" width="255" height="4" rx="2" fill="url(#a)"/>
+</svg>
