@@ -726,7 +726,7 @@ export default function App() {
       )}
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 overflow-hidden">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
         {/* Left Column: VentusGPT Stage & Controls (7 cols on desktop) */}
         <div className="lg:col-span-7 flex flex-col gap-4">
           {/* Main Visualizer Stage */}
