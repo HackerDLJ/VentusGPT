@@ -7,6 +7,11 @@ export type AgriDecision = WeatherDecision & {
   activity: AgriActivity;
   suitability: "FAVORABLE" | "CAUTION" | "POSTPONE";
   farmActions: string[];
+  decision: "PROCEED" | "CAUTION" | "HALT_POSTPONE";
+  advice: string;
+  rainfallProbability: number;
+  windSpeedKmh: number;
+  gustSpeedKmh: number;
 };
 
 export function evaluateAgriculture(input: {
@@ -47,11 +52,23 @@ export function evaluateAgriculture(input: {
     farmActions.push("Confirm field access and crop dryness before harvesting operations.");
   }
 
+  const decisionLabel = suitability === "POSTPONE" ? "HALT_POSTPONE" : suitability === "CAUTION" ? "CAUTION" : "PROCEED";
+  const advice = suitability === "POSTPONE"
+    ? farmActions[0] || "Postpone the activity and reassess when conditions improve."
+    : suitability === "CAUTION"
+      ? farmActions[0] || "Proceed cautiously and reassess the latest forecast before starting."
+      : farmActions[0] || "Conditions are comparatively favorable. Continue to verify crop-specific guidance.";
+
   return {
     ...decision,
     crop: input.crop,
     activity: input.activity,
     suitability,
     farmActions,
+    decision: decisionLabel,
+    advice,
+    rainfallProbability: Math.round(input.rainProbability ?? 0),
+    windSpeedKmh: Math.round(input.windKmh ?? 0),
+    gustSpeedKmh: Math.round(input.gustKmh ?? 0),
   };
 }
