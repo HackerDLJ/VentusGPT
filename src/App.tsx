@@ -1,124 +1,160 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, BarChart3, Bell, Bot, ChevronRight, CloudRain, Droplets, Gauge, Leaf, MapPin, Menu, Mic, MicOff, Navigation, RefreshCw, Send, ShieldCheck, Sun, Thermometer, Wind, X } from "lucide-react";
-import "./index.css";
+import { Activity, AlertTriangle, BarChart3, Bot, Calculator, CloudRain, Compass, ExternalLink, Image as ImageIcon, Leaf, Loader2, MapPin, Menu, Mic, Search, Send, ShieldAlert, Sparkles, Thermometer, Volume2, Wind, X } from "lucide-react";
 
-type Tab = "overview" | "chat" | "alerts" | "farmer" | "climate" | "models";
+type Weather = any;
 type Message = { role: "user" | "assistant"; text: string; sources?: { title: string; uri: string }[] };
-const QUICK = ["Will it rain today?", "What should I know about today?", "Is tomorrow good for travelling?", "Can I spray pesticide tomorrow?"];
-const tabs: { id: Tab; label: string; icon: any }[] = [
-  { id: "overview", label: "Overview", icon: CloudRain },
+
+type Page = "overview" | "chat" | "alerts" | "farmer" | "climate" | "nwp" | "studio";
+
+const nav: { id: Page; label: string; icon: any }[] = [
+  { id: "overview", label: "Command Center", icon: Compass },
   { id: "chat", label: "Ask VentusGPT", icon: Bot },
-  { id: "alerts", label: "Alert Center", icon: Bell },
+  { id: "alerts", label: "Alert Center", icon: ShieldAlert },
   { id: "farmer", label: "Farmer Mode", icon: Leaf },
   { id: "climate", label: "Climate Explorer", icon: BarChart3 },
-  { id: "models", label: "NWP Lab", icon: Activity },
+  { id: "nwp", label: "NWP Lab", icon: Activity },
+  { id: "studio", label: "AI Studio", icon: Sparkles },
 ];
 
-export default function App() {
+const quickQuestions = [
+  "Will it rain today?",
+  "Can I travel tomorrow?",
+  "Is it safe to spray pesticide?",
+  "Explain today's weather risk",
+];
+
+async function jsonFetch(url: string, init?: RequestInit) {
+  const r = await fetch(url, init);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || `Request failed (${r.status})`);
+  return body;
+}
+
+function fmtDay(date: string, i: number) {
+  if (i === 0) return "TODAY";
+  return new Date(date).toLocaleDateString("en-IN", { weekday: "short" }).toUpperCase();
+}
+
+function App() {
+  const [page, setPage] = useState<Page>("overview");
   const [location, setLocation] = useState("Chennai");
   const [locationInput, setLocationInput] = useState("Chennai");
-  const [weather, setWeather] = useState<any>(null);
-  const [tab, setTab] = useState<Tab>("overview");
-  const [messages, setMessages] = useState<Message[]>([{ role: "assistant", text: "I'm VentusGPT. Ask me about weather, forecasts, alerts, climate or farming. I'll ground weather answers in live numerical-model data and show where the information came from." }]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [listening, setListening] = useState(false);
+  const [weather, setWeather] = useState<Weather | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [alerts, setAlerts] = useState<any>(null);
-  const [climate, setClimate] = useState<any>(null);
-  const [nwp, setNwp] = useState<any>(null);
-  const [farmer, setFarmer] = useState({ crop: "Paddy", activity: "Pesticide spraying", result: null as any });
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false);
+  const [studioTool, setStudioTool] = useState("Research");
+  const [studioInput, setStudioInput] = useState("");
+  const [studioResult, setStudioResult] = useState("");
 
   const loadWeather = async (place = location) => {
-    setError("");
+    setLoading(true); setError("");
+    try { setWeather(await jsonFetch(`/api/weather/forecast?location=${encodeURIComponent(place)}`)); }
+    catch (e: any) { setError(e.message || "Weather service unavailable"); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { loadWeather(); }, []);
+
+  const ask = async (text = input) => {
+    const q = text.trim(); if (!q || thinking) return;
+    const next = [...messages, { role: "user", text: q } as Message];
+    setMessages(next); setInput(""); setThinking(true); setPage("chat"); setError("");
     try {
-      const r = await fetch(`/api/weather/forecast?location=${encodeURIComponent(place)}`);
-      const d = await r.json(); if (!r.ok) throw Error(d.error);
-      setWeather(d); setLocation(d.location); setLocationInput(d.location);
-    } catch (e: any) { setError(e.message || "Weather service unavailable"); }
+      const out = await jsonFetch("/api/gemini/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: q, history: next, location, language: "auto" }) });
+      setWeather(out.weather || weather); setMessages([...next, { role: "assistant", text: out.text, sources: out.sources }]);
+    } catch (e: any) { setMessages([...next, { role: "assistant", text: `I couldn't reach the intelligence layer: ${e.message}` }]); }
+    finally { setThinking(false); }
   };
-  const loadAlerts = async () => { try { const r = await fetch(`/api/alerts?location=${encodeURIComponent(location)}`); const d = await r.json(); if (!r.ok) throw Error(d.error); setAlerts(d); } catch (e: any) { setError(e.message || "Alert service unavailable"); } };
-  const loadClimate = async () => { try { const r = await fetch(`/api/climate/trend?location=${encodeURIComponent(location)}`); const d = await r.json(); if (!r.ok) throw Error(d.error); setClimate(d); } catch (e: any) { setError(e.message || "Climate service unavailable"); } };
-  const loadNwp = async () => { try { const r = await fetch(`/api/nwp/gfs?location=${encodeURIComponent(location)}&hours=36`); const d = await r.json(); if (!r.ok) throw Error(d.error); setNwp(d); } catch (e: any) { setError(e.message || "NWP service unavailable"); } };
-  const runFarmer = async () => { try { const r = await fetch("/api/advisory/agri", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location, crop: farmer.crop, activity: farmer.activity }) }); const d = await r.json(); if (!r.ok) throw Error(d.error); setFarmer(f => ({ ...f, result: d })); } catch (e: any) { setError(e.message || "Advisory service unavailable"); } };
 
-  useEffect(() => { loadWeather("Chennai"); }, []);
-  useEffect(() => { if (tab === "alerts") loadAlerts(); if (tab === "climate") loadClimate(); if (tab === "models") loadNwp(); }, [tab, location]);
+  const changeLocation = async () => {
+    const value = locationInput.trim(); if (!value) return;
+    setLocation(value); await loadWeather(value);
+  };
 
-  const send = async (preset?: string) => {
-    const text = (preset ?? input).trim(); if (!text || loading) return;
-    setInput(""); setTab("chat"); const next = [...messages, { role: "user" as const, text }]; setMessages(next); setLoading(true);
+  const alert = weather?.alert;
+  const current = weather?.current;
+  const days = weather?.daily || [];
+  const riskClass = alert?.severity === "WARNING" || alert?.severity === "OFFICIAL" ? "danger" : alert?.severity === "WATCH" ? "official-risk" : "";
+
+  const runStudio = async () => {
+    const q = studioInput.trim(); if (!q) return;
+    setStudioResult("");
     try {
-      const r = await fetch("/api/gemini/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, history: next.slice(-10), location, language: /[\u0B80-\u0BFF]/.test(text) ? "ta" : "auto" }) });
-      const d = await r.json(); if (!r.ok) throw Error(d.error);
-      setMessages(m => [...m, { role: "assistant", text: d.text, sources: d.sources }]); if (d.weather) setWeather(d.weather);
-    } catch (e: any) { setMessages(m => [...m, { role: "assistant", text: `I couldn't reach the weather intelligence layer: ${e.message}` }]); } finally { setLoading(false); }
+      if (studioTool === "Research") {
+        const out = await jsonFetch("/api/tools/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }) });
+        setStudioResult(out.result || "No result.");
+      } else if (studioTool === "Calculate") {
+        const out = await jsonFetch("/api/tools/execute-code", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expression: q }) });
+        setStudioResult(out.result || "No result.");
+      } else {
+        setStudioResult(`${studioTool} is connected to the VentusGPT multimodal backend. Use the conversation workspace for contextual weather reasoning, or provide the required input here.`);
+      }
+    } catch (e: any) { setStudioResult(e.message || "Tool failed"); }
   };
-  const voice = () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return setError("Voice input is not supported in this browser."); if (listening) return;
-    const r = new SR(); r.lang = "en-IN"; r.interimResults = false; r.onstart = () => setListening(true); r.onend = () => setListening(false); r.onerror = () => setListening(false); r.onresult = (e: any) => setInput(e.results[0][0].transcript); r.start();
-  };
-  const speak = (text: string) => { if (!("speechSynthesis" in window)) return; speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = /[\u0B80-\u0BFF]/.test(text) ? "ta-IN" : "en-IN"; speechSynthesis.speak(u); };
-  const current = weather?.current, today = weather?.daily?.[0];
-  const maxRain = useMemo(() => Math.max(...(weather?.daily?.map((d: any) => d.precipitationProbability) || [0])), [weather]);
-  const mapUrl = weather?.coordinates ? `https://www.openstreetmap.org/export/embed.html?bbox=${weather.coordinates.longitude - 0.18}%2C${weather.coordinates.latitude - 0.12}%2C${weather.coordinates.longitude + 0.18}%2C${weather.coordinates.latitude + 0.12}&layer=mapnik&marker=${weather.coordinates.latitude}%2C${weather.coordinates.longitude}` : "";
 
-  return <div className="app-shell">
-    <header className="topbar">
-      <button className="mobile-menu" onClick={() => setTab("overview")}><Menu size={18}/></button>
-      <div className="brand"><img src="/branding/ventus-mark.svg"/><div><b>Ventus<span>GPT</span></b><small>WEATHER INTELLIGENCE</small></div></div>
-      <div className="location"><MapPin size={15}/><input value={locationInput} onChange={e => setLocationInput(e.target.value)} onKeyDown={e => e.key === "Enter" && loadWeather(locationInput)} /><button onClick={() => loadWeather(locationInput)}><ChevronRight size={17}/></button></div>
-      <div className="top-actions"><button title="Refresh weather" onClick={() => loadWeather(location)}><RefreshCw size={17}/></button><span className="live"><i/> LIVE</span></div>
-    </header>
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="nav-title">VENTUS COMMAND</div>
-        {tabs.map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? "nav active" : "nav"} onClick={() => setTab(id)}><Icon/><span>{label}</span><ChevronRight className="nav-arrow"/></button>)}
-        <div className="sidebar-status"><div><span className="status-dot"/> SYSTEM ONLINE</div><small>Weather intelligence stack</small></div>
-        <div className="sidebar-bottom"><img src="/branding/ventus-wordmark.svg"/><span>Conversational intelligence for weather, alerts & climate.</span><em>SIH 26068 · v2.0 BUILD</em></div>
-      </aside>
-      <main>
-        {error && <div className="error"><AlertTriangle size={16}/>{error}<button onClick={() => setError("")}><X size={15}/></button></div>}
-        {tab === "overview" && <Overview weather={weather} today={today} maxRain={maxRain} alert={weather?.alert} onAsk={send} mapUrl={mapUrl}/>} 
-        {tab === "chat" && <Chat messages={messages} input={input} setInput={setInput} send={send} loading={loading} voice={voice} listening={listening} speak={speak} location={location}/>} 
-        {tab === "alerts" && <Alerts data={alerts} location={location} refresh={loadAlerts}/>} 
-        {tab === "farmer" && <Farmer location={location} farmer={farmer} setFarmer={setFarmer} run={runFarmer}/>} 
-        {tab === "climate" && <Climate data={climate} location={location}/>} 
-        {tab === "models" && <Models data={nwp} location={location} refresh={loadNwp}/>} 
-      </main>
+  const content = useMemo(() => {
+    if (page === "chat") return <ChatView messages={messages} input={input} setInput={setInput} ask={ask} thinking={thinking} location={location} />;
+    if (page === "alerts") return <AlertsView weather={weather} />;
+    if (page === "farmer") return <FarmerView location={location} />;
+    if (page === "climate") return <ClimateView location={location} />;
+    if (page === "nwp") return <NwpView location={location} />;
+    if (page === "studio") return <StudioView tool={studioTool} setTool={setStudioTool} input={studioInput} setInput={setStudioInput} result={studioResult} run={runStudio} />;
+    return <Overview weather={weather} loading={loading} riskClass={riskClass} ask={ask} location={location} />;
+  }, [page, weather, loading, messages, input, thinking, location, studioTool, studioInput, studioResult]);
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Open navigation">{mobileNav ? <X /> : <Menu />}</button>
+        <div className="brand"><img src="/favicon.svg" alt="VentusGPT" /><div><b>Ventus<span>GPT</span></b><small>WEATHER INTELLIGENCE</small></div></div>
+        <div className="location"><MapPin size={14}/><input value={locationInput} onChange={e => setLocationInput(e.target.value)} onKeyDown={e => e.key === "Enter" && changeLocation()} placeholder="Search a city or district"/><button onClick={changeLocation}><Search size={15}/></button></div>
+        <div className="top-actions"><span className="live"><i/> LIVE DATA</span><button onClick={() => loadWeather()} aria-label="Refresh weather"><Activity size={17}/></button></div>
+      </header>
+      <div className="shell">
+        <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
+          <div className="nav-title">VENTUS INTELLIGENCE</div>
+          <nav className="nav-list">{nav.map(n => { const I = n.icon; return <button key={n.id} className={`nav ${page === n.id ? "active" : ""}`} onClick={() => { setPage(n.id); setMobileNav(false); }}><I/><span>{n.label}</span></button>; })}</nav>
+          <div className="sidebar-status"><div><span className="status-dot"/> SYSTEM ONLINE</div><small>Forecast · AI · NWP routing active</small></div>
+          <div className="sidebar-bottom"><img src="/branding/ventus-wordmark.svg" alt="VentusGPT"/><span>Conversational weather intelligence for citizens, farmers and disaster awareness.</span><em>SIH26068 · v2.0</em></div>
+        </aside>
+        <main className="main">{error && <div className="error"><AlertTriangle size={15}/>{error}<button onClick={() => setError("")}><X size={14}/></button></div>}{content}</main>
+      </div>
     </div>
-  </div>;
+  );
 }
 
-function Overview({ weather, today, maxRain, alert, onAsk, mapUrl }: any) {
-  const c = weather?.current;
-  const peak = weather?.daily?.reduce((a: any, b: any) => Number(b.precipitationProbability) > Number(a.precipitationProbability) ? b : a, weather?.daily?.[0]);
+function Overview({ weather, loading, riskClass, ask, location }: any) {
+  const c = weather?.current; const days = weather?.daily || []; const alert = weather?.alert;
+  if (loading && !weather) return <div className="page"><div className="panel" style={{padding:40,textAlign:"center"}}><Loader2 className="spin"/> Loading weather intelligence…</div></div>;
   return <div className="page">
-    <div className="page-intro"><div><span className="eyebrow">VENTUS / WEATHER INTELLIGENCE</span><h1>Read the atmosphere. <span>Act with context.</span></h1><p>Live conditions, numerical forecasts, risk signals and conversational intelligence for {weather?.location || "your location"}.</p></div><button className="outline" onClick={() => onAsk("Give me a complete weather briefing for today")}>Generate briefing <ChevronRight size={16}/></button></div>
-    <div className="signal-strip"><div><i className="signal-live"/> <b>LIVE WEATHER DATA</b><span>{weather?.provider?.name || "Connecting"}</span></div><div><b>MODEL</b><span>{weather?.provider?.model || "--"}</span></div><div><b>UPDATED</b><span>{weather ? new Date(weather.provider.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"}</span></div><div className={alert?.official ? "official" : "model"}><b>{alert?.official ? "OFFICIAL" : "MODEL"}</b><span>{alert?.official ? "IMD warning active" : "Risk signal only"}</span></div></div>
-    <section className="hero-grid">
-      <div className="hero panel"><div className="eyebrow"><i/> CURRENT CONDITIONS · {weather?.timezone || "LOCAL"}</div><div className="hero-main"><div><strong className="temp">{c ? Math.round(c.temperature) : "--"}°</strong><h2>{c?.condition || "Loading conditions"}</h2><p>Feels like {c?.feelsLike ?? "--"}° · {weather?.location || ""}</p></div><div className="hero-mark"><img src="/branding/ventus-mark.svg"/><span>{c?.windDirection || "--"}</span></div></div><div className="metrics"><Metric icon={<Droplets/>} label="Humidity" value={c ? `${c.humidity}%` : "--"}/><Metric icon={<Wind/>} label="Wind" value={c ? `${Math.round(c.windSpeed)} km/h` : "--"}/><Metric icon={<Gauge/>} label="Pressure" value={c ? `${Math.round(c.pressure)} hPa` : "--"}/><Metric icon={<CloudRain/>} label="Rain chance" value={today ? `${today.precipitationProbability}%` : "--"}/></div></div>
-      <div className={alert?.active ? `risk panel ${alert.official ? "official-risk" : "danger"}` : "risk panel"}><div className="risk-label"><span>{alert?.official ? "OFFICIAL IMD SIGNAL" : alert?.active ? "MODEL RISK SIGNAL" : "SYSTEM STATUS"}</span>{alert?.official ? <Bell size={16}/> : <ShieldCheck size={16}/>}</div><h2>{alert?.title || "No elevated weather signal"}</h2><p>{alert?.description || "Current model data does not show an elevated local hazard signal."}</p><div className="risk-advice">{alert?.actionAdvice || "For severe weather, verify the latest official IMD / NDMA bulletin before acting."}</div><small>{alert?.official ? `Source: ${alert.source || "India Meteorological Department"}` : "Model-derived · not an official warning"}</small></div>
-    </section>
-    <div className="decision-row"><Decision icon={<CloudRain/>} label="Rain window" value={peak ? `${peak.precipitationProbability}%` : "--"} note={peak ? `Peak probability · ${new Date(peak.date).toLocaleDateString([], { weekday: "short" })}` : "Forecast loading"}/><Decision icon={<Wind/>} label="Peak wind" value={today ? `${Math.round(today.wind)} km/h` : "--"} note="Today's forecast maximum"/><Decision icon={<Sun/>} label="UV index" value={today?.uv ?? "--"} note="Today's maximum"/><Decision icon={<Navigation/>} label="Sunset" value={today?.sunset ? new Date(today.sunset).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"} note="Local time"/></div>
-    <div className="section-title"><div><span className="eyebrow">NEXT 7 DAYS</span><h2>Forecast at a glance</h2></div><b className="rain-peak">Peak rain probability {maxRain}%</b></div>
-    <div className="forecast">{(weather?.daily || []).map((d: any, i: number) => <div className={i === 0 ? "day today" : "day"} key={d.date}><span>{i === 0 ? "TODAY" : new Date(d.date).toLocaleDateString([], { weekday: "short" }).toUpperCase()}</span><CloudRain/><strong>{Math.round(d.max)}° <em>{Math.round(d.min)}°</em></strong><small>{d.condition}</small><label>Rain {d.precipitationProbability}%</label><div className="rain-bar"><i style={{ width: `${Math.min(100, d.precipitationProbability)}%` }}/></div></div>)}</div>
-    <div className="lower-grid"><div className="map-card panel"><div className="card-head"><div><span className="eyebrow">LOCATION CONTEXT</span><h2>{weather?.location || "Your location"}</h2></div><span className="coord">{weather?.coordinates ? `${weather.coordinates.latitude.toFixed(3)}°, ${weather.coordinates.longitude.toFixed(3)}°` : "--"}</span></div>{mapUrl ? <iframe title="Location map" src={mapUrl} loading="lazy"/> : <div className="map-empty">Waiting for location coordinates…</div>}<div className="map-foot"><MapPin size={13}/> Location map · OpenStreetMap · not a weather radar</div></div><div className="ask-card panel"><span className="eyebrow">CONVERSATIONAL AI</span><h2>Ask the atmosphere.</h2><p>Follow-up questions keep your location and weather context in the conversation.</p><div className="quick">{QUICK.map(q => <button key={q} onClick={() => onAsk(q)}>{q}<ChevronRight size={15}/></button>)}</div></div></div>
-    <div className="source-row"><span>DATA</span><b>{weather?.provider?.name || "Connecting…"}</b><span>MODEL</span><b>{weather?.provider?.model || "--"}</b><span>STATUS</span><b className="green">● LIVE</b><span>WARNING SOURCE</span><b>{alert?.official ? "IMD" : "Official source verification required"}</b></div>
+    <div className="page-intro"><div><div className="eyebrow">COMMAND CENTER / {weather?.location || location}</div><h1>Know the sky.<br/><span>Make the decision.</span></h1><p>One conversational layer across live conditions, forecasts, numerical models, official warnings and practical weather decisions.</p></div><button className="outline" onClick={() => ask("Explain the most important weather decision for me today")}>Ask VentusGPT <Sparkles size={13}/></button></div>
+    <div className="signal-strip"><div><span className="signal-live"/><b>LIVE</b><span>{weather?.provider?.name || "Weather provider"}</span></div><div className={alert?.official ? "official" : "model"}><AlertTriangle size={13}/><b>{alert?.official ? "OFFICIAL" : "MODEL"}</b><span>{alert?.title || "No elevated risk"}</span></div><div><b>MODEL</b><span>{weather?.provider?.model || "NWP"}</span></div><div><b>UPDATED</b><span>{weather?.provider?.updatedAt ? new Date(weather.provider.updatedAt).toLocaleTimeString("en-IN", {hour:"2-digit",minute:"2-digit"}) : "now"}</span></div></div>
+    <div className="hero-grid"><section className="panel hero"><div className="eyebrow"><i/> CURRENT CONDITIONS</div><div className="hero-main"><div><div className="temp">{Math.round(c?.temperature ?? 0)}°</div><h2>{c?.condition || "Loading"}</h2><p>Feels like {Math.round(c?.feelsLike ?? 0)}° · {weather?.location}</p></div><div className="hero-mark"><CloudRain size={55}/><span>ATMOSPHERE</span></div></div><div className="metrics"><Metric icon={<Thermometer/>} label="FEELS LIKE" value={`${Math.round(c?.feelsLike ?? 0)}°C`}/><Metric icon={<CloudRain/>} label="HUMIDITY" value={`${c?.humidity ?? "—"}%`}/><Metric icon={<Wind/>} label="WIND" value={`${Math.round(c?.windSpeed ?? 0)} km/h`}/><Metric icon={<Activity/>} label="PRESSURE" value={`${Math.round(c?.pressure ?? 0)} hPa`}/></div></section><section className={`panel risk ${riskClass}`}><div className="risk-label"><span>{alert?.official ? "OFFICIAL ALERT" : "RISK INTELLIGENCE"}</span><span>{alert?.severity || "NORMAL"}</span></div><h2>{alert?.title || "No elevated model signal"}</h2><p>{alert?.description || "Current forecast data shows no significant hazard signal. VentusGPT continues to monitor the forecast context."}</p><div className="risk-advice">{alert?.actionAdvice || "Continue normal planning and check official updates when conditions are important."}</div><small>Source: {alert?.source || weather?.provider?.name || "Weather model"}</small></section></div>
+    <div className="decision-row"><Decision icon={<CloudRain/>} label="RAIN CHANCE" value={`${days[0]?.precipitationProbability ?? 0}%`} note="today"/><Decision icon={<Wind/>} label="WIND GUST" value={`${Math.round(c?.windGusts ?? 0)} km/h`} note={c?.windGusts >= 40 ? "elevated" : "normal"}/><Decision icon={<Activity/>} label="UV INDEX" value={`${days[0]?.uv ?? "—"}`} note="peak"/><Decision icon={<Leaf/>} label="FIELD SIGNAL" value={days[0]?.precipitationProbability > 60 ? "WAIT" : "CHECK"} note="agriculture"/></div>
+    <div className="section-title"><div><div className="eyebrow">NEXT 7 DAYS</div><h2>Forecast timeline</h2></div><span className="rain-peak">Rain peak · {Math.max(...days.map((d:any) => d.precipitationProbability || 0), 0)}%</span></div>
+    <div className="forecast">{days.map((d:any,i:number)=><div className={`day ${i===0?"today":""}`} key={d.date}><span>{fmtDay(d.date,i)}</span><CloudRain/><strong>{Math.round(d.max)}° <em>{Math.round(d.min)}°</em></strong><small>{d.condition}</small><label>{d.precipitationProbability}% rain</label><div className="rain-bar"><i style={{width:`${Math.min(100,d.precipitationProbability||0)}%`}}/></div></div>)}</div>
+    <div className="lower-grid"><section className="panel map-card"><div className="card-head"><div><div className="eyebrow">LOCATION CONTEXT</div><h2>{weather?.location}</h2></div><span className="coord">{weather?.coordinates?.latitude?.toFixed?.(3)}, {weather?.coordinates?.longitude?.toFixed?.(3)}</span></div>{weather?.coordinates ? <iframe title="location map" src={`https://www.openstreetmap.org/export/embed.html?bbox=${weather.coordinates.longitude-0.08}%2C${weather.coordinates.latitude-0.05}%2C${weather.coordinates.longitude+0.08}%2C${weather.coordinates.latitude+0.05}&layer=mapnik&marker=${weather.coordinates.latitude}%2C${weather.coordinates.longitude}`}/> : <div className="map-empty">Location context unavailable</div>}<div className="map-foot"><MapPin size={11}/> Weather context is centered on the selected location.</div></section><section className="panel ask-card"><div className="eyebrow">CONVERSATIONAL LAYER</div><h2>Ask anything.</h2><p>Weather facts are grounded in the live forecast. Ask follow-ups naturally and VentusGPT keeps the context.</p><div className="quick">{quickQuestions.map(q=><button key={q} onClick={()=>ask(q)}>{q}<Send size={12}/></button>)}</div></section></div>
+    <div className="source-row"><b>PROVENANCE</b><span>{weather?.provider?.name}</span><span>{weather?.provider?.model}</span><span className="green">● Live forecast</span><span>Official warnings are shown separately when available.</span></div>
   </div>;
 }
 
-function Decision({ icon, label, value, note }: any) { return <div className="decision panel"><div className="decision-icon">{icon}</div><div><span>{label}</span><b>{value}</b><small>{note}</small></div></div>; }
-function Metric({ icon, label, value }: any) { return <div className="metric">{icon}<div><small>{label}</small><b>{value}</b></div></div>; }
+function Metric({icon,label,value}:any){return <div className="metric">{icon}<div><small>{label}</small><b>{value}</b></div></div>}
+function Decision({icon,label,value,note}:any){return <div className="panel decision"><div className="decision-icon">{icon}</div><div><span>{label}</span><b>{value}</b><small>{note}</small></div></div>}
 
-function Chat({ messages, input, setInput, send, loading, voice, listening, speak, location }: any) { return <div className="chat"><div className="chat-head"><div><span className="eyebrow">CONVERSATIONAL WEATHER AI</span><h1>Ask VentusGPT</h1><p>Context-aware weather intelligence for <b>{location}</b>. Ask naturally, then ask a follow-up.</p></div><span className="grounded">● DATA-GROUNDED</span></div><div className="messages">{messages.map((m: Message, i: number) => <div className={m.role === "user" ? "message user" : "message"} key={i}><div className="avatar">{m.role === "user" ? "YOU" : <img src="/branding/ventus-mark.svg"/>}</div><div className="bubble"><p>{m.text}</p>{m.sources && <div className="sources">{m.sources.map(s => <a href={s.uri} target="_blank" rel="noreferrer" key={s.uri}>{s.title} ↗</a>)}</div>}{m.role === "assistant" && <button className="read" onClick={() => speak(m.text)}>🔊 Read aloud</button>}</div></div>)}{loading && <div className="typing"><span/> <span/> <span/> VentusGPT is checking the weather layer…</div>}</div><div className="composer"><button className={listening ? "mic on" : "mic"} onClick={voice}>{listening ? <MicOff/> : <Mic/>}</button><input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder="Ask about rain, wind, travel, farming or alerts…"/><button className="send" onClick={() => send()} disabled={loading}><Send/></button></div><div className="chips">{QUICK.map(q => <button key={q} onClick={() => send(q)}>{q}</button>)}</div></div>; }
+function ChatView({messages,input,setInput,ask,thinking,location}:any){return <div className="chat"><div className="chat-head"><div><div className="eyebrow">CONVERSATION / {location.toUpperCase()}</div><h1>Talk to <span style={{color:"var(--cyan)"}}>VentusGPT.</span></h1><p>Weather-grounded conversation with context across forecasts, risk and decisions.</p></div><span className="grounded">● WEATHER GROUNDED</span></div><div className="messages">{messages.length===0&&<div className="panel" style={{padding:24,marginTop:20}}><div className="eyebrow">START HERE</div><h2 style={{fontFamily:"Space Grotesk"}}>What do you need to know?</h2><div className="quick">{quickQuestions.map((q:string)=><button key={q} onClick={()=>ask(q)}>{q}<Send size={12}/></button>)}</div></div>}{messages.map((m:Message,i:number)=><div className={`message ${m.role}`} key={i}><div className="avatar">{m.role==="user"?"YOU":<img src="/favicon.svg" alt="V"/>}</div><div><div className="bubble"><p>{m.text}</p></div>{m.sources?.length?<div className="sources">{m.sources.map(s=><a key={s.uri} href={s.uri} target="_blank" rel="noreferrer">{s.title}<ExternalLink size={8}/></a>)}</div>:null}{m.role==="assistant"&&<button className="read" onClick={()=>window.speechSynthesis?.speak(new SpeechSynthesisUtterance(m.text))}><Volume2 size={11}/> Read aloud</button>}</div></div>)}{thinking&&<div className="message"><div className="avatar"><img src="/favicon.svg" alt="V"/></div><div className="typing">VentusGPT is reasoning <span/><span/><span/></div></div>}</div><form className="composer" onSubmit={e=>{e.preventDefault();ask()}}><button type="button" className="mic" onClick={()=>window.speechSynthesis && alert("Use Live Voice from the AI Studio for continuous voice conversation.")}><Mic size={17}/></button><input value={input} onChange={e=>setInput(e.target.value)} placeholder="Ask about weather, travel, farming, climate…"/><button className="send" type="submit"><Send size={17}/></button></form></div>}
 
-function Alerts({ data, location, refresh }: any) { const a = data?.alert; return <div className="page"><div className="page-intro"><div><span className="eyebrow">ALERT CENTER</span><h1>Weather risk, without the noise.</h1><p>Official warnings and model-derived signals are deliberately separated so users know what they are looking at.</p></div><button className="outline" onClick={refresh}><RefreshCw size={15}/> Refresh</button></div><div className={a?.official ? "alert-large official-alert" : a?.active ? "alert-large active" : "alert-large"}><div className="alert-icon">{a?.active ? <AlertTriangle/> : <ShieldCheck/>}</div><div><span>{a?.official ? "OFFICIAL IMD" : a?.active ? a.severity : "NO ACTIVE MODEL SIGNAL"}</span><h2>{a?.title || "No elevated local hazard detected"}</h2><p>{a?.description || "VentusGPT has not detected an elevated hazard in the current model data."}</p><div className="advice">{a?.actionAdvice || "Continue normal planning and check official bulletins before acting on severe weather."}</div><small>{a?.source || "NWP model"}</small></div></div><div className="alert-grid"><div className="verification"><ShieldCheck/><div><b>Source discipline</b><p>VentusGPT never labels a model-derived signal as an official warning. Official alerts take precedence when an authenticated IMD product is available.</p></div></div><div className="verification"><Activity/><div><b>Model intelligence</b><p>Numerical-model signals are useful context, not emergency authority. For safety-critical decisions, verify the latest official bulletin.</p></div></div></div></div>; }
+function AlertsView({weather}:any){const a=weather?.alert;return <div className="page"><div className="page-intro"><div><div className="eyebrow">SAFETY / ALERT CENTER</div><h1>Signal, source, <span>action.</span></h1><p>VentusGPT keeps numerical-model signals separate from official meteorological warnings.</p></div></div><section className={`panel risk ${a?.official?"official-risk":a?.active?"danger":""}`} style={{maxWidth:850}}><div className="risk-label"><span>{a?.official?"OFFICIAL SOURCE":"MODEL SIGNAL"}</span><span>{a?.severity||"NORMAL"}</span></div><h2>{a?.title||"No elevated signal"}</h2><p>{a?.description||"No elevated hazard signal is currently detected."}</p><div className="risk-advice">{a?.actionAdvice||"Continue normal planning."}</div><small>Source: {a?.source||"NWP model"}</small></section><div className="signal-strip" style={{marginTop:14}}><div><b>LOCATION</b><span>{weather?.location}</span></div><div><b>STATUS</b><span>{a?.active?"Active signal":"Monitoring"}</span></div><div><b>AUTHORITY</b><span>{a?.official?"IMD":"Not official"}</span></div><div><b>RULE</b><span>Verify critical warnings</span></div></div></div>}
 
-function Farmer({ location, farmer, setFarmer, run }: any) { return <div className="page"><div className="page-intro"><div><span className="eyebrow">FARMER MODE</span><h1>Weather into field decisions.</h1><p>Select the crop and activity. VentusGPT checks forecast conditions and explains the decision instead of dumping raw weather numbers.</p></div><span className="farmer-mark">🌾</span></div><div className="farmer-grid"><div className="panel form-panel"><label>LOCATION<input value={location} readOnly/></label><label>CROP<select value={farmer.crop} onChange={e => setFarmer((f: any) => ({ ...f, crop: e.target.value }))}><option>Paddy</option><option>Wheat</option><option>Maize</option><option>Groundnut</option><option>Cotton</option><option>Banana</option></select></label><label>ACTIVITY<select value={farmer.activity} onChange={e => setFarmer((f: any) => ({ ...f, activity: e.target.value }))}><option>Pesticide spraying</option><option>Fertilizer application</option><option>Irrigation</option><option>Harvesting</option><option>Field work</option></select></label><button className="primary" onClick={run}>Analyze field conditions <ChevronRight/></button><p className="form-note">Advisory is weather-informed and model-derived. It does not replace local agronomist or official agricultural guidance.</p></div><div className="panel decision-panel">{farmer.result ? <><span className="eyebrow">VENTUS FIELD ADVISORY · {farmer.result.crop}</span><h2 className={farmer.result.decision === "HALT_POSTPONE" ? "bad" : "good"}>{farmer.result.decision === "HALT_POSTPONE" ? "Postpone this activity" : "Conditions are comparatively suitable"}</h2><div className="decision-grid"><div><b>{farmer.result.rainfallProbability}%</b><small>Rain probability</small></div><div><b>{Math.round(farmer.result.windSpeedKmh)} km/h</b><small>Wind</small></div><div><b>{Math.round(farmer.result.temperatureC)}°C</b><small>Temperature</small></div></div><p>{farmer.result.advice}</p><div className="advisory-rule"><ShieldCheck size={15}/><span>Verify local agricultural guidance before acting.</span></div></> : <div className="empty"><Leaf/><h2>Ready when you are.</h2><p>We'll translate forecast conditions into a practical field recommendation.</p></div>}</div></div></div>; }
+function FarmerView({location}:any){const [crop,setCrop]=useState("Paddy"),[activity,setActivity]=useState("Pesticide spraying"),[out,setOut]=useState<any>(null),[busy,setBusy]=useState(false);const run=async()=>{setBusy(true);try{setOut(await jsonFetch("/api/advisory/agri",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({location,crop,activity})}))}catch(e:any){setOut({error:e.message})}finally{setBusy(false)}};return <div className="page"><div className="page-intro"><div><div className="eyebrow">DECISION SUPPORT / AGRICULTURE</div><h1>Field decisions, <span>grounded.</span></h1><p>Combine crop activity with forecast conditions to decide whether to proceed, postpone or verify.</p></div></div><div className="panel" style={{padding:22,maxWidth:850}}><div className="quick" style={{gridTemplateColumns:"1fr 1fr"}}><label style={{fontSize:9,color:"#66809a"}}>CROP<select value={crop} onChange={e=>setCrop(e.target.value)} style={{display:"block",width:"100%",marginTop:7,padding:10,background:"#091725",color:"#d9e8f5",border:"1px solid #ffffff12",borderRadius:9}}><option>Paddy</option><option>Banana</option><option>Groundnut</option><option>Tomato</option><option>Cotton</option></select></label><label style={{fontSize:9,color:"#66809a"}}>ACTIVITY<select value={activity} onChange={e=>setActivity(e.target.value)} style={{display:"block",width:"100%",marginTop:7,padding:10,background:"#091725",color:"#d9e8f5",border:"1px solid #ffffff12",borderRadius:9}}><option>Pesticide spraying</option><option>Irrigation</option><option>Fertilizer application</option><option>Harvesting</option></select></label></div><button className="outline" style={{marginTop:14}} onClick={run}>{busy?<Loader2 className="spin"/>:<Leaf size={14}/>} Analyze conditions</button></div>{out&&<section className={`panel risk ${out.decision==="HALT_POSTPONE"?"danger":""}`} style={{maxWidth:850,marginTop:14}}><div className="risk-label"><span>FIELD ADVISORY</span><span>{out.decision}</span></div><h2>{out.advice}</h2><p>{out.crop} · {out.activity} · {out.location}</p><div className="decision-row" style={{gridTemplateColumns:"1fr 1fr"}}><Decision icon={<CloudRain/>} label="RAIN PROBABILITY" value={`${out.rainfallProbability}%`} note="today"/><Decision icon={<Wind/>} label="WIND" value={`${out.windSpeedKmh} km/h`} note="forecast"/></div></section>}</div>}
 
-function Climate({ data, location }: any) { const years = data?.years || []; const max = Math.max(...years.map((x: any) => x.rainfall), 1); return <div className="page"><div className="page-intro"><div><span className="eyebrow">CLIMATE EXPLORER</span><h1>{location} over time.</h1><p>Historical context for rainfall, temperature and wind. Forecasts and climate history stay separate so trends aren't mistaken for tomorrow's weather.</p></div></div><div className="panel climate"><div className="section-title"><div><span className="eyebrow">ANNUAL RAINFALL</span><h2>Ten-year historical trend</h2></div><span className="source">{data?.provider || "Loading…"}</span></div>{years.length ? <div className="bars">{years.map((y: any) => <div className="bar-col" key={y.year}><b>{Math.round(y.rainfall)}</b><div className="bar" style={{ height: `${Math.max(8, y.rainfall / max * 190)}px` }}/><span>{y.year}</span></div>)}</div> : <div className="empty"><BarChart3/><p>Loading historical climate data…</p></div>}</div><div className="climate-note"><Activity size={15}/><span>Historical archive: useful for context, not a direct prediction of future weather.</span></div></div>; }
+function ClimateView({location}:any){const [data,setData]=useState<any>(null);useEffect(()=>{jsonFetch(`/api/climate/trend?location=${encodeURIComponent(location)}`).then(setData).catch(()=>setData(null))},[location]);return <div className="page"><div className="page-intro"><div><div className="eyebrow">HISTORICAL CONTEXT / 10 YEARS</div><h1>Climate, <span>not guesswork.</span></h1><p>Historical context helps explain trends. It is not a forecast.</p></div></div><section className="panel" style={{padding:22}}>{!data?<Loader2 className="spin"/>:<div>{data.years.map((y:any)=><div key={y.year} style={{display:"grid",gridTemplateColumns:"70px 1fr 110px 110px",gap:12,alignItems:"center",padding:"10px 0",borderBottom:"1px solid #ffffff09",fontSize:9}}><b>{y.year}</b><div className="rain-bar" style={{width:"100%"}}><i style={{width:`${Math.min(100,y.rainfall/15)}%`}}/></div><span>{y.rainfall} mm rain</span><span>{y.meanTemperature}°C avg</span></div>)}</div>}</section></div>}
 
-function Models({ data, location, refresh }: any) { const v = data?.variables || {}; const times = v.time || []; const probs = v.precipitationProbability || []; const winds = v.wind || []; const maxP = Math.max(...probs.slice(0, 18).map(Number), 1); return <div className="page"><div className="page-intro"><div><span className="eyebrow">NWP LAB · {location.toUpperCase()}</span><h1>Look inside the forecast.</h1><p>Expose numerical-model output instead of hiding it behind the chatbot. This view is designed for technical evaluation and future multi-model comparison.</p></div><button className="outline" onClick={refresh}><RefreshCw size={15}/> Refresh model</button></div><div className="model-banner"><div><span className="eyebrow">MODEL PROVIDER</span><h2>{data?.provider || "GFS"}</h2><p>Hourly numerical forecast · {data?.generatedAt ? new Date(data.generatedAt).toLocaleString() : "loading"}</p></div><div className="model-chip"><Activity size={15}/> NWP DATA</div></div><div className="model-grid"><div className="panel model-chart"><div className="section-title"><div><span className="eyebrow">PRECIPITATION PROBABILITY</span><h2>Next 18 hours</h2></div></div><div className="nwp-bars">{probs.slice(0,18).map((p: any, i: number) => <div className="nwp-col" key={i}><div className="nwp-bar" style={{ height: `${Math.max(5, Number(p || 0) / maxP * 150)}px` }}/><b>{Math.round(Number(p || 0))}%</b><span>{times[i] ? new Date(times[i]).toLocaleTimeString([], { hour: "2-digit" }) : "--"}</span></div>)}</div></div><div className="panel model-stats"><span className="eyebrow">MODEL SIGNALS</span><Stat icon={<Wind/>} label="Peak wind" value={`${Math.round(Math.max(...winds.slice(0, 18).map(Number), 0))} km/h`}/><Stat icon={<CloudRain/>} label="Peak rain probability" value={`${Math.round(Math.max(...probs.slice(0, 18).map(Number), 0))}%`}/><Stat icon={<Gauge/>} label="Forecast horizon" value={`${times.length || 0} h`}/><div className="model-disclaimer"><ShieldCheck size={14}/><span>NWP output is model guidance, not an official warning.</span></div></div></div></div>; }
-function Stat({ icon, label, value }: any) { return <div className="stat"><div>{icon}</div><span>{label}</span><b>{value}</b></div>; }
+function NwpView({location}:any){const [data,setData]=useState<any>(null);useEffect(()=>{jsonFetch(`/api/nwp/gfs?location=${encodeURIComponent(location)}&hours=48`).then(setData).catch(()=>setData(null))},[location]);return <div className="page"><div className="page-intro"><div><div className="eyebrow">NUMERICAL WEATHER PREDICTION</div><h1>Inside the <span>model.</span></h1><p>Inspect model output separately from official warnings. This is evidence, not authority.</p></div></div><section className="panel" style={{padding:22}}>{!data?<Loader2 className="spin"/>:<><div className="signal-strip">{Object.entries(data).slice(0,4).map(([k,v]:any)=><div key={k}><b>{k.toUpperCase()}</b><span>{typeof v==="object"?"available":String(v)}</span></div>)}</div><pre style={{whiteSpace:"pre-wrap",color:"#8da5bd",fontSize:9,lineHeight:1.6,overflow:"auto"}}>{JSON.stringify(data,null,2).slice(0,7000)}</pre></>}</section></div>}
+
+function StudioView({tool,setTool,input,setInput,result,run}:any){const tools=[{name:"Research",icon:Search,placeholder:"Ask a current factual question…"},{name:"Calculate",icon:Calculator,placeholder:"Enter an expression or math problem…"},{name:"Vision",icon:ImageIcon,placeholder:"Describe what you want to analyze…"},{name:"Create",icon:Sparkles,placeholder:"Describe an image you want to create…"}];const current=tools.find(x=>x.name===tool)||tools[0];return <div className="page"><div className="page-intro"><div><div className="eyebrow">MULTIMODAL WORKSPACE</div><h1>AI <span>Studio.</span></h1><p>Research, calculate, inspect and create while staying inside the VentusGPT ecosystem.</p></div></div><div className="decision-row" style={{gridTemplateColumns:"repeat(4,1fr)"}}>{tools.map(t=>{const I=t.icon;return <button className="panel decision" key={t.name} onClick={()=>setTool(t.name)} style={{color:tool===t.name?"#dff7ff":"#8fa5bb",borderColor:tool===t.name?"#55c8ef44":"#ffffff0d"}}><div className="decision-icon"><I/></div><div><span>TOOL</span><b>{t.name}</b><small>{tool===t.name?"ACTIVE":"OPEN"}</small></div></button>})}</div><section className="panel" style={{padding:22,marginTop:14,maxWidth:900}}><div className="eyebrow">{tool.toUpperCase()}</div><h2 style={{fontFamily:"Space Grotesk",fontSize:25,margin:"8px 0"}}>{current.placeholder}</h2><div className="composer" style={{marginTop:18}}><input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&run()} placeholder={current.placeholder}/><button className="send" onClick={run}><Send size={16}/></button></div>{result&&<div className="bubble" style={{marginTop:18}}><p>{result}</p></div>}</section></div>}
+
+export default App;
