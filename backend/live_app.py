@@ -40,12 +40,8 @@ async def emit(ws: WebSocket, payload: dict[str, Any]):
 
 async def live_endpoint(websocket: WebSocket):
     await websocket.accept()
-
     if not legacy.client:
-        await emit(websocket, {
-            "type": "session_error",
-            "error": "GEMINI_API_KEY is not configured on the Python backend.",
-        })
+        await emit(websocket, {"type": "session_error", "error": "GEMINI_API_KEY is not configured on the Python backend."})
         await websocket.close(code=1011)
         return
 
@@ -145,5 +141,10 @@ async def live_endpoint(websocket: WebSocket):
             pass
 
 
+route_before_mount = len(legacy.app.router.routes)
 legacy.app.add_api_websocket_route("/api/live/ws", live_endpoint)
+# backend.main mounts the frontend at "/" near the end. Move the WebSocket
+# route ahead of that catch-all mount so /api/live/ws always reaches Python.
+new_route = legacy.app.router.routes.pop()
+legacy.app.router.routes.insert(max(0, route_before_mount - 1), new_route)
 app = legacy.app
