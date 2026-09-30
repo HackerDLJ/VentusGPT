@@ -1,10 +1,252 @@
 import { WeatherData } from "../types";
 import { checkWeatherThresholds, formatLiveCaptionAlert } from "./weatherAlertService";
-export interface LiveClientOptions { model?: string; voice?: string; systemInstruction?: string; targetLanguageCode?: string; history?: Array<{role:string;text:string}>; }
-export interface LiveClientCallbacks { onReady:(info:{sessionId:string;model:string;voice:string})=>void; onAudioChunk:(audio:string)=>void; onModelText:(text:string)=>void; onCaption:(caption:string)=>void; onUserTranscription?:(text:string,finished:boolean)=>void; onInterrupted:()=>void; onTurnComplete:()=>void; onToolInvoked:(tool:{id:string;name:string;args:any;status:string})=>void; onToolResult:(result:{id:string;name:string;result:any})=>void; onError:(error:string)=>void; onClose:(reason?:string)=>void; }
-export async function getWeatherForecast(location="Chennai"):Promise<WeatherData>{const r=await fetch(`/api/weather/forecast?location=${encodeURIComponent(location)}`);if(!r.ok)throw new Error(`Weather service returned HTTP ${r.status}`);return await r.json() as WeatherData;}
-const IDENTITY="I am VentusGPT, created by Team JATABELS.";
-export class LiveClient{private sessionId:string|null=null;private eventSource:EventSource|null=null;private callbacks:LiveClientCallbacks;private isConnected=false;private isConnecting=false;private currentLanguageCode="en";private audioQueue:string[]=[];private isSendingAudio=false;constructor(callbacks:LiveClientCallbacks){this.callbacks=callbacks;}
-async connect(options:LiveClientOptions){if(this.isConnected||this.isConnecting)this.disconnect();this.isConnecting=true;this.currentLanguageCode=options.targetLanguageCode||"en";const instruction=`${IDENTITY} You are Ventus Live, the realtime conversational interface of VentusGPT. Speak naturally, warmly and expressively, with human-like pacing and concise spoken sentences. Never sound robotic or read like a report. Match the user's language automatically. Support English and Tamil fluently, including natural Tamil script, and switch languages when the user switches. Preserve emotional context and respond with appropriate conversational warmth. You are a weather and climate intelligence assistant. Clearly distinguish numerical-model estimates from official government warnings. Never present model output as an official warning. ${options.systemInstruction||""}`;try{const r=await fetch("/api/live/session/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:options.model||"gemini-3.1-flash-live-preview",voice:options.voice||"Zephyr",systemInstruction:instruction,targetLanguageCode:options.targetLanguageCode||"en",history:options.history||[]})});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||"Failed to start Ventus Live");const d=await r.json();this.sessionId=d.sessionId;this.eventSource=new EventSource(`/api/live/session/${this.sessionId}/events`);this.eventSource.onopen=()=>{this.isConnected=true;this.isConnecting=false;};this.eventSource.onmessage=e=>{if(!e.data)return;try{const m=JSON.parse(e.data);switch(m.type){case"ready":this.callbacks.onReady({sessionId:m.sessionId||this.sessionId!,model:m.model||options.model||"gemini-3.1-flash-live-preview",voice:m.voice||options.voice||"Zephyr"});break;case"audio":if(m.audio)this.callbacks.onAudioChunk(m.audio);break;case"model_text":if(m.text)this.callbacks.onModelText(m.text);break;case"caption":if(m.text)this.callbacks.onCaption(m.text);break;case"user_transcription":if(m.text&&this.callbacks.onUserTranscription)this.callbacks.onUserTranscription(m.text,!!m.finished);break;case"interrupted":this.callbacks.onInterrupted();break;case"turn_complete":this.callbacks.onTurnComplete();break;case"tool_invoked":this.callbacks.onToolInvoked({id:m.id,name:m.name,args:m.args,status:m.status||"executing"});break;case"tool_result":this.callbacks.onToolResult({id:m.id,name:m.name,result:m.result});break;case"session_error":this.callbacks.onError(m.error||"Ventus Live session error");break;case"session_closed":this.callbacks.onClose(m.reason);this.disconnect();break;}}catch(err){console.error("Ventus Live SSE parse error",err);}};this.eventSource.onerror=()=>{if(this.eventSource?.readyState===EventSource.CLOSED){this.callbacks.onClose("Live session ended");this.disconnect();}};}catch(err:any){this.isConnecting=false;this.isConnected=false;this.callbacks.onError(err.message||"Could not start Ventus Live");this.disconnect();}}
-sendAudioChunk(base64Pcm:string){if(!this.isConnected||!this.sessionId)return;if(this.audioQueue.length>5)this.audioQueue.splice(0,this.audioQueue.length-3);this.audioQueue.push(base64Pcm);this.flushAudioQueue();}private async flushAudioQueue(){if(this.isSendingAudio||!this.audioQueue.length||!this.sessionId)return;this.isSendingAudio=true;const chunk=this.audioQueue.shift()!;try{await fetch(`/api/live/session/${this.sessionId}/input`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"audio",audio:chunk})});}finally{this.isSendingAudio=false;if(this.audioQueue.length)setTimeout(()=>this.flushAudioQueue(),10);}}
-async sendVideoFrame(base64Jpeg:string){if(this.isConnected&&this.sessionId)await fetch(`/api/live/session/${this.sessionId}/input`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"video",video:base64Jpeg})}).catch(()=>{});}async sendTextMessage(text:string){if(this.isConnected&&this.sessionId)await fetch(`/api/live/session/${this.sessionId}/input`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"text",text})}).catch(()=>{});}async sendInterrupt(){if(this.isConnected&&this.sessionId){this.audioQueue=[];await fetch(`/api/live/session/${this.sessionId}/input`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"audio_end"})}).catch(()=>{});}}disconnect(){this.isConnected=false;this.isConnecting=false;this.audioQueue=[];if(this.eventSource){this.eventSource.close();this.eventSource=null;}if(this.sessionId){const id=this.sessionId;this.sessionId=null;fetch(`/api/live/session/${id}/stop`,{method:"POST"}).catch(()=>{});}}get connected(){return this.isConnected;}async checkWeatherAndAlert(location="Chennai"){const data=await getWeatherForecast(location);this.callbacks.onToolResult({id:`weather-${Date.now()}`,name:"getWeatherForecast",result:data});const alert=checkWeatherThresholds(data)||data.alert;if(alert?.active)this.callbacks.onCaption(formatLiveCaptionAlert(alert,data.location,this.currentLanguageCode.startsWith("ta")));return data;}}
+
+export interface LiveClientOptions {
+  model?: string;
+  voice?: string;
+  systemInstruction?: string;
+  targetLanguageCode?: string;
+  history?: Array<{ role: string; text: string }>;
+}
+
+export interface LiveClientCallbacks {
+  onReady: (info: { sessionId: string; model: string; voice: string }) => void;
+  onAudioChunk: (audio: string) => void;
+  onModelText: (text: string) => void;
+  onCaption: (caption: string) => void;
+  onUserTranscription?: (text: string, finished: boolean) => void;
+  onInterrupted: () => void;
+  onTurnComplete: () => void;
+  onToolInvoked: (tool: { id: string; name: string; args: any; status: string }) => void;
+  onToolResult: (result: { id: string; name: string; result: any }) => void;
+  onError: (error: string) => void;
+  onClose: (reason?: string) => void;
+}
+
+export async function getWeatherForecast(location = "Chennai"): Promise<WeatherData> {
+  const r = await fetch(`/api/weather/forecast?location=${encodeURIComponent(location)}`);
+  if (!r.ok) throw new Error(`Weather service returned HTTP ${r.status}`);
+  return (await r.json()) as WeatherData;
+}
+
+const IDENTITY = "I am VentusGPT, created by Team JATABELS.";
+
+export class LiveClient {
+  private sessionId: string | null = null;
+  private eventSource: EventSource | null = null;
+  private callbacks: LiveClientCallbacks;
+  private isConnected = false;
+  private isConnecting = false;
+  private currentLanguageCode = "en";
+  private audioQueue: string[] = [];
+  private isSendingAudio = false;
+
+  constructor(callbacks: LiveClientCallbacks) {
+    this.callbacks = callbacks;
+  }
+
+  async connect(options: LiveClientOptions) {
+    if (this.isConnected || this.isConnecting) this.disconnect();
+
+    this.isConnecting = true;
+    this.currentLanguageCode = options.targetLanguageCode || "auto";
+
+    const instruction = `${IDENTITY}
+You are Ventus Live, the realtime conversational interface of VentusGPT.
+Speak naturally, warmly and expressively, with human-like pacing and concise spoken sentences. Never sound robotic or read like a report. Use natural conversational fillers sparingly when appropriate, acknowledge what the user said, and vary sentence rhythm.
+Match the user's language automatically. Support English and Tamil fluently, including natural Tamil script, and switch languages when the user switches. Do not translate unless asked.
+Preserve emotional context and respond with appropriate conversational warmth.
+You are a weather and climate intelligence assistant. Clearly distinguish numerical-model estimates from official government warnings. Never present model output as an official warning. When safety is involved, recommend checking official local warnings.
+${options.systemInstruction || ""}`;
+
+    try {
+      const r = await fetch("/api/live/session/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: options.model || "gemini-3.1-flash-live-preview",
+          voice: options.voice || "Zephyr",
+          systemInstruction: instruction,
+          targetLanguageCode: options.targetLanguageCode || "auto",
+          history: options.history || [],
+        }),
+      });
+
+      if (!r.ok) {
+        throw new Error((await r.json().catch(() => ({}))).error || "Failed to start Ventus Live");
+      }
+
+      const d = await r.json();
+      this.sessionId = d.sessionId;
+      this.eventSource = new EventSource(`/api/live/session/${this.sessionId}/events`);
+
+      this.eventSource.onopen = () => {
+        this.isConnected = true;
+        this.isConnecting = false;
+      };
+
+      this.eventSource.onmessage = (e) => {
+        if (!e.data) return;
+        try {
+          const m = JSON.parse(e.data);
+          switch (m.type) {
+            case "ready":
+              this.callbacks.onReady({
+                sessionId: m.sessionId || this.sessionId!,
+                model: m.model || options.model || "gemini-3.1-flash-live-preview",
+                voice: m.voice || options.voice || "Zephyr",
+              });
+              break;
+            case "audio":
+              if (m.audio) this.callbacks.onAudioChunk(m.audio);
+              break;
+            case "model_text":
+              if (m.text) this.callbacks.onModelText(m.text);
+              break;
+            case "caption":
+              if (m.text) this.callbacks.onCaption(m.text);
+              break;
+            case "user_transcription":
+              if (m.text && this.callbacks.onUserTranscription) {
+                this.callbacks.onUserTranscription(m.text, m.finished !== false);
+              }
+              break;
+            case "interrupted":
+              this.callbacks.onInterrupted();
+              break;
+            case "turn_complete":
+              this.callbacks.onTurnComplete();
+              break;
+            case "tool_invoked":
+              this.callbacks.onToolInvoked({
+                id: m.id || `tool-${Date.now()}`,
+                name: m.name,
+                args: m.args,
+                status: m.status || "executing",
+              });
+              break;
+            case "tool":
+              // Python backend emits a compact tool event after executing a Live function.
+              this.callbacks.onToolResult({
+                id: m.id || `tool-${Date.now()}`,
+                name: m.name,
+                result: m.result,
+              });
+              break;
+            case "tool_result":
+              this.callbacks.onToolResult({ id: m.id, name: m.name, result: m.result });
+              break;
+            case "session_error":
+              this.callbacks.onError(m.error || "Ventus Live session error");
+              break;
+            case "session_closed":
+              this.callbacks.onClose(m.reason);
+              this.disconnect();
+              break;
+          }
+        } catch (err) {
+          console.error("Ventus Live SSE parse error", err);
+        }
+      };
+
+      this.eventSource.onerror = () => {
+        if (this.eventSource?.readyState === EventSource.CLOSED) {
+          this.callbacks.onClose("Live session ended");
+          this.disconnect();
+        }
+      };
+    } catch (err: any) {
+      this.isConnecting = false;
+      this.isConnected = false;
+      this.callbacks.onError(err.message || "Could not start Ventus Live");
+      this.disconnect();
+    }
+  }
+
+  sendAudioChunk(base64Pcm: string) {
+    if (!this.isConnected || !this.sessionId) return;
+    if (this.audioQueue.length > 5) this.audioQueue.splice(0, this.audioQueue.length - 3);
+    this.audioQueue.push(base64Pcm);
+    this.flushAudioQueue();
+  }
+
+  private async flushAudioQueue() {
+    if (this.isSendingAudio || !this.audioQueue.length || !this.sessionId) return;
+    this.isSendingAudio = true;
+    const chunk = this.audioQueue.shift()!;
+    try {
+      await fetch(`/api/live/session/${this.sessionId}/input`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "audio", audio: chunk }),
+      });
+    } finally {
+      this.isSendingAudio = false;
+      if (this.audioQueue.length) setTimeout(() => this.flushAudioQueue(), 10);
+    }
+  }
+
+  async sendVideoFrame(base64Jpeg: string) {
+    if (this.isConnected && this.sessionId) {
+      await fetch(`/api/live/session/${this.sessionId}/input`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "video", video: base64Jpeg }),
+      }).catch(() => {});
+    }
+  }
+
+  async sendTextMessage(text: string) {
+    if (this.isConnected && this.sessionId) {
+      await fetch(`/api/live/session/${this.sessionId}/input`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "text", text }),
+      }).catch(() => {});
+    }
+  }
+
+  async sendInterrupt() {
+    if (this.isConnected && this.sessionId) {
+      this.audioQueue = [];
+      await fetch(`/api/live/session/${this.sessionId}/input`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "audio_end" }),
+      }).catch(() => {});
+    }
+  }
+
+  disconnect() {
+    this.isConnected = false;
+    this.isConnecting = false;
+    this.audioQueue = [];
+
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+
+    if (this.sessionId) {
+      const id = this.sessionId;
+      this.sessionId = null;
+      fetch(`/api/live/session/${id}/stop`, { method: "POST" }).catch(() => {});
+    }
+  }
+
+  get connected() {
+    return this.isConnected;
+  }
+
+  async checkWeatherAndAlert(location = "Chennai") {
+    const data = await getWeatherForecast(location);
+    this.callbacks.onToolResult({ id: `weather-${Date.now()}`, name: "getWeatherForecast", result: data });
+    const alert = checkWeatherThresholds(data) || data.alert;
+    if (alert?.active) {
+      this.callbacks.onCaption(
+        formatLiveCaptionAlert(alert, data.location, this.currentLanguageCode.startsWith("ta")),
+      );
+    }
+    return data;
+  }
+}
