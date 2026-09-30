@@ -25,8 +25,7 @@ Keep normal voice replies concise, clear and conversational. Never claim to be h
 def live_config(instruction: str, voice: str):
     return types.LiveConnectConfig(
         response_modalities=["AUDIO"],
-        system_instruction=f"{IDENTITY}\n\n{instruction}\n\nVoice behavior: sound natural, warm, expressive and spontaneous. Use realistic pacing and sentence rhythm. Avoid repetitive filler words."
-        ,
+        system_instruction=f"{IDENTITY}\n\n{instruction}\n\nVoice behavior: sound natural, warm, expressive and spontaneous. Use realistic pacing and sentence rhythm. Avoid repetitive filler words.",
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         speech_config=types.SpeechConfig(
@@ -72,6 +71,10 @@ async def live_endpoint(websocket: WebSocket):
 
         async with client.aio.live.connect(model=LIVE_MODEL, config=live_config(instruction, voice)) as session:
             await emit(websocket, {"type": "ready", "model": LIVE_MODEL, "voice": voice})
+            await session.send_client_content(
+                turns={"role": "user", "parts": [{"text": "Open the conversation with a short, natural greeting. Identify yourself as VentusGPT created by Team JATABELS. Keep it warm and under two sentences."}]},
+                turn_complete=True,
+            )
 
             async def browser_to_gemini():
                 while True:
