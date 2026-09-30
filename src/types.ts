@@ -1,6 +1,6 @@
 export type LiveStatus = "disconnected" | "connecting" | "connected" | "error";
 
-export type LiveModel = "gemini-3.1-flash-live-preview" | "gemini-3.5-transcribe-live";
+export type LiveModel = "gemini-3.8-live" | "gemini-3.1-flash-live-preview" | "gemini-3.5-transcribe-live";
 
 export type VentusVoice = "Zephyr" | "Puck" | "Charon" | "Kore" | "Fenrir";
 export type GeminiVoice = VentusVoice;
@@ -68,12 +68,12 @@ export interface WeatherData {
   temperature: number;
   feelsLike: number;
   condition: string;
-  windSpeed: number; // km/h
-  windGusts?: number; // km/h
+  windSpeed: number;
+  windGusts?: number;
   windDirection: string;
-  humidity: number; // %
-  barometricPressure: string; // e.g. "1004 hPa"
-  precipitationProbability: number; // %
+  humidity: number;
+  barometricPressure: string;
+  precipitationProbability: number;
   uvIndex: number;
   timestamp: string;
   alert?: SevereWeatherAlert | null;
