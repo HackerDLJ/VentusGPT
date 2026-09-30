@@ -56,8 +56,6 @@ async def live_endpoint(websocket: WebSocket):
             await websocket.close(code=1002)
             return
 
-        # The old UI may still request the legacy model. Always route Live through
-        # the current stable Gemini 3.8 Live model on the Python backend.
         model = LIVE_MODEL
         voice = str(start.get("voice") or DEFAULT_VOICE)
         instruction = str(start.get("systemInstruction") or "Be a natural multilingual voice assistant.")
@@ -78,17 +76,12 @@ async def live_endpoint(websocket: WebSocket):
                 while True:
                     message = json.loads(await websocket.receive_text())
                     kind = message.get("type")
-
                     if kind == "audio":
                         pcm = base64.b64decode(message.get("audio", ""))
-                        await session.send_realtime_input(
-                            audio=types.Blob(data=pcm, mime_type="audio/pcm;rate=16000")
-                        )
+                        await session.send_realtime_input(audio=types.Blob(data=pcm, mime_type="audio/pcm;rate=16000"))
                     elif kind == "video":
                         image = base64.b64decode(message.get("video", ""))
-                        await session.send_realtime_input(
-                            video=types.Blob(data=image, mime_type="image/jpeg")
-                        )
+                        await session.send_realtime_input(video=types.Blob(data=image, mime_type="image/jpeg"))
                     elif kind == "text":
                         text = str(message.get("text", "")).strip()
                         if text:
@@ -96,10 +89,7 @@ async def live_endpoint(websocket: WebSocket):
                     elif kind == "audio_end":
                         await session.send_realtime_input(audio_stream_end=True)
                     elif kind == "interrupt":
-                        await session.send_client_content(
-                            turns={"role": "user", "parts": [{"text": " "}]},
-                            turn_complete=True,
-                        )
+                        await session.send_client_content(turns={"role": "user", "parts": [{"text": " "}]}, turn_complete=True)
                     elif kind == "ping":
                         await emit(websocket, {"type": "pong"})
 
@@ -110,11 +100,9 @@ async def live_endpoint(websocket: WebSocket):
                         inp = getattr(server, "input_transcription", None)
                         if inp and getattr(inp, "text", None):
                             await emit(websocket, {"type": "user_transcription", "text": inp.text})
-
                         out = getattr(server, "output_transcription", None)
                         if out and getattr(out, "text", None):
                             await emit(websocket, {"type": "caption", "text": out.text})
-
                         turn = getattr(server, "model_turn", None)
                         if turn:
                             for part in turn.parts:
@@ -122,25 +110,18 @@ async def live_endpoint(websocket: WebSocket):
                                     await emit(websocket, {"type": "model_text", "text": part.text})
                                 inline = getattr(part, "inline_data", None)
                                 if inline and getattr(inline, "data", None):
-                                    await emit(websocket, {
-                                        "type": "audio",
-                                        "audio": base64.b64encode(inline.data).decode("ascii"),
-                                    })
-
+                                    await emit(websocket, {"type": "audio", "audio": base64.b64encode(inline.data).decode("ascii")})
                         if getattr(server, "interrupted", False):
                             await emit(websocket, {"type": "interrupted"})
                         if getattr(server, "turn_complete", False):
                             await emit(websocket, {"type": "turn_complete"})
-
                     status = getattr(response, "interaction_status", None)
                     if status:
                         await emit(websocket, {"type": "interaction_status", "status": str(status)})
 
             sender = asyncio.create_task(browser_to_gemini())
             receiver = asyncio.create_task(gemini_to_browser())
-            done, pending = await asyncio.wait(
-                {sender, receiver}, return_when=asyncio.FIRST_EXCEPTION
-            )
+            done, pending = await asyncio.wait({sender, receiver}, return_when=asyncio.FIRST_EXCEPTION)
             for task in pending:
                 task.cancel()
             for task in done:
@@ -164,6 +145,5 @@ async def live_endpoint(websocket: WebSocket):
             pass
 
 
-# Register before the existing / static mount so the frontend cannot swallow
-# the WebSocket route. FastAPI supports WebSocket routes on the same app.
 legacy.app.add_api_websocket_route("/api/live/ws", live_endpoint)
+app = legacy.app
