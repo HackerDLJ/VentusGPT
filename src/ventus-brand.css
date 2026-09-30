@@ -1,0 +1,57 @@
+:root {
+  --ventus-blue: #2424ff;
+  --ventus-blue-soft: rgba(36, 36, 255, 0.12);
+  --ventus-blue-line: rgba(36, 36, 255, 0.34);
+}
+
+html,
+body,
+#root {
+  background: #050505;
+}
+
+body {
+  color: #f7f7f8;
+}
+
+::selection {
+  background: var(--ventus-blue);
+  color: white;
+}
+
+/* Re-skin legacy purple utility classes without rewriting the whole UI. */
+[class*="bg-purple-"] {
+  background-color: var(--ventus-blue-soft) !important;
+}
+
+[class*="text-purple-"] {
+  color: #9a9aff !important;
+}
+
+[class*="border-purple-"] {
+  border-color: var(--ventus-blue-line) !important;
+}
+
+[class*="shadow-purple-"] {
+  --tw-shadow-color: rgba(36, 36, 255, 0.24) !important;
+}
+
+[class*="from-purple-"],
+[class*="via-purple-"] {
+  --tw-gradient-from: rgba(36, 36, 255, 0.22) !important;
+  --tw-gradient-to: rgba(36, 36, 255, 0) !important;
+}
+
+button[class*="bg-purple-600"] {
+  background: var(--ventus-blue) !important;
+}
+
+button[class*="bg-purple-600"]:hover {
+  background: #3535ff !important;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--ventus-blue) !important;
+}
