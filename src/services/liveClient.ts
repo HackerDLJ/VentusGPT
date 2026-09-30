@@ -1,6 +1,3 @@
-import { WeatherData } from "../types";
-import { checkWeatherThresholds, formatLiveCaptionAlert } from "./weatherAlertService";
-
 export interface LiveClientOptions {
   model?: string;
   voice?: string;
@@ -23,92 +20,79 @@ export interface LiveClientCallbacks {
   onClose: (reason?: string) => void;
 }
 
-export async function getWeatherForecast(location = "Chennai"): Promise<WeatherData> {
-  const r = await fetch(`/api/weather/forecast?location=${encodeURIComponent(location)}`);
-  if (!r.ok) throw new Error(`Weather service returned HTTP ${r.status}`);
-  return (await r.json()) as WeatherData;
-}
-
-const IDENTITY = "I am VentusGPT, created by Team JATABELS.";
+const IDENTITY = "I'm VentusGPT, created by Team JATABELS.";
+const DEFAULT_MODEL = "gemini-3.8-live";
+const DEFAULT_VOICE = "Zephyr";
 
 export class LiveClient {
-  private sessionId: string | null = null;
-  private eventSource: EventSource | null = null;
+  private socket: WebSocket | null = null;
   private callbacks: LiveClientCallbacks;
   private isConnected = false;
   private isConnecting = false;
-  private currentLanguageCode = "en";
-  private audioQueue: string[] = [];
-  private isSendingAudio = false;
+  private currentLanguageCode = "auto";
 
   constructor(callbacks: LiveClientCallbacks) {
     this.callbacks = callbacks;
   }
 
   async connect(options: LiveClientOptions) {
-    if (this.isConnected || this.isConnecting) this.disconnect();
-
+    this.disconnect();
     this.isConnecting = true;
     this.currentLanguageCode = options.targetLanguageCode || "auto";
 
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${protocol}//${window.location.host}/api/live/ws`;
+
     const instruction = `${IDENTITY}
-You are Ventus Live, the realtime conversational interface of VentusGPT.
-Speak naturally, warmly and expressively, with human-like pacing and concise spoken sentences. Never sound robotic or read like a report. Use natural conversational fillers sparingly when appropriate, acknowledge what the user said, and vary sentence rhythm.
-Match the user's language automatically. Support English and Tamil fluently, including natural Tamil script, and switch languages when the user switches. Do not translate unless asked.
-Preserve emotional context and respond with appropriate conversational warmth.
-You are a weather and climate intelligence assistant. Clearly distinguish numerical-model estimates from official government warnings. Never present model output as an official warning. When safety is involved, recommend checking official local warnings.
+You are Ventus Live, the real-time conversational interface of VentusGPT.
+Speak naturally, warmly and expressively. Sound like a real conversational partner, not a voice-over or a written report. Vary pacing and sentence length, use brief natural acknowledgements when they fit, and respond to the user's emotional tone without becoming theatrical.
+Detect the user's language automatically. Reply in that language and switch languages immediately when the user switches. Tamil and English should sound natural and fluent, including mixed Tamil-English conversation. Do not translate unless asked.
+Keep normal voice replies concise. Give structured detail only when the user asks for it.
 ${options.systemInstruction || ""}`;
 
-    try {
-      const r = await fetch("/api/live/session/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: options.model || "gemini-3.1-flash-live-preview",
-          voice: options.voice || "Zephyr",
+    await new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(url);
+      this.socket = socket;
+
+      socket.onopen = () => {
+        socket.send(JSON.stringify({
+          type: "start",
+          model: options.model || DEFAULT_MODEL,
+          voice: options.voice || DEFAULT_VOICE,
           systemInstruction: instruction,
           targetLanguageCode: options.targetLanguageCode || "auto",
           history: options.history || [],
-        }),
-      });
-
-      if (!r.ok) {
-        throw new Error((await r.json().catch(() => ({}))).error || "Failed to start Ventus Live");
-      }
-
-      const d = await r.json();
-      this.sessionId = d.sessionId;
-      this.eventSource = new EventSource(`/api/live/session/${this.sessionId}/events`);
-
-      this.eventSource.onopen = () => {
-        this.isConnected = true;
-        this.isConnecting = false;
+        }));
       };
 
-      this.eventSource.onmessage = (e) => {
-        if (!e.data) return;
+      socket.onmessage = (event) => {
         try {
-          const m = JSON.parse(e.data);
-          switch (m.type) {
+          const message = JSON.parse(event.data);
+          switch (message.type) {
+            case "backend_ready":
+              break;
             case "ready":
+              this.isConnected = true;
+              this.isConnecting = false;
               this.callbacks.onReady({
-                sessionId: m.sessionId || this.sessionId!,
-                model: m.model || options.model || "gemini-3.1-flash-live-preview",
-                voice: m.voice || options.voice || "Zephyr",
+                sessionId: "python-live-websocket",
+                model: message.model || DEFAULT_MODEL,
+                voice: message.voice || options.voice || DEFAULT_VOICE,
               });
+              resolve();
               break;
             case "audio":
-              if (m.audio) this.callbacks.onAudioChunk(m.audio);
+              if (message.audio) this.callbacks.onAudioChunk(message.audio);
               break;
             case "model_text":
-              if (m.text) this.callbacks.onModelText(m.text);
+              if (message.text) this.callbacks.onModelText(message.text);
               break;
             case "caption":
-              if (m.text) this.callbacks.onCaption(m.text);
+              if (message.text) this.callbacks.onCaption(message.text);
               break;
             case "user_transcription":
-              if (m.text && this.callbacks.onUserTranscription) {
-                this.callbacks.onUserTranscription(m.text, m.finished !== false);
+              if (message.text && this.callbacks.onUserTranscription) {
+                this.callbacks.onUserTranscription(message.text, true);
               }
               break;
             case "interrupted":
@@ -117,136 +101,85 @@ ${options.systemInstruction || ""}`;
             case "turn_complete":
               this.callbacks.onTurnComplete();
               break;
-            case "tool_invoked":
-              this.callbacks.onToolInvoked({
-                id: m.id || `tool-${Date.now()}`,
-                name: m.name,
-                args: m.args,
-                status: m.status || "executing",
-              });
-              break;
-            case "tool":
-              // Python backend emits a compact tool event after executing a Live function.
-              this.callbacks.onToolResult({
-                id: m.id || `tool-${Date.now()}`,
-                name: m.name,
-                result: m.result,
-              });
-              break;
-            case "tool_result":
-              this.callbacks.onToolResult({ id: m.id, name: m.name, result: m.result });
+            case "interaction_status":
+              if (message.status === "IN_PROGRESS") {
+                this.callbacks.onToolInvoked({
+                  id: "interaction",
+                  name: "Thinking",
+                  args: {},
+                  status: "running",
+                });
+              }
               break;
             case "session_error":
-              this.callbacks.onError(m.error || "Ventus Live session error");
-              break;
-            case "session_closed":
-              this.callbacks.onClose(m.reason);
-              this.disconnect();
+              this.callbacks.onError(message.error || "Ventus Live session error");
               break;
           }
-        } catch (err) {
-          console.error("Ventus Live SSE parse error", err);
+        } catch (error) {
+          console.error("Ventus Live message error", error);
         }
       };
 
-      this.eventSource.onerror = () => {
-        if (this.eventSource?.readyState === EventSource.CLOSED) {
-          this.callbacks.onClose("Live session ended");
-          this.disconnect();
-        }
+      socket.onerror = () => {
+        const message = "Ventus Live could not connect to the Python backend.";
+        this.isConnecting = false;
+        if (!this.isConnected) reject(new Error(message));
+        this.callbacks.onError(message);
       };
-    } catch (err: any) {
-      this.isConnecting = false;
-      this.isConnected = false;
-      this.callbacks.onError(err.message || "Could not start Ventus Live");
-      this.disconnect();
-    }
+
+      socket.onclose = (event) => {
+        const wasConnected = this.isConnected;
+        this.isConnected = false;
+        this.isConnecting = false;
+        this.socket = null;
+        if (!wasConnected) reject(new Error(event.reason || "Ventus Live connection closed"));
+        else this.callbacks.onClose(event.reason || "Live session ended");
+      };
+    });
   }
 
   sendAudioChunk(base64Pcm: string) {
-    if (!this.isConnected || !this.sessionId) return;
-    if (this.audioQueue.length > 5) this.audioQueue.splice(0, this.audioQueue.length - 3);
-    this.audioQueue.push(base64Pcm);
-    this.flushAudioQueue();
-  }
-
-  private async flushAudioQueue() {
-    if (this.isSendingAudio || !this.audioQueue.length || !this.sessionId) return;
-    this.isSendingAudio = true;
-    const chunk = this.audioQueue.shift()!;
-    try {
-      await fetch(`/api/live/session/${this.sessionId}/input`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "audio", audio: chunk }),
-      });
-    } finally {
-      this.isSendingAudio = false;
-      if (this.audioQueue.length) setTimeout(() => this.flushAudioQueue(), 10);
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type: "audio", audio: base64Pcm }));
     }
   }
 
   async sendVideoFrame(base64Jpeg: string) {
-    if (this.isConnected && this.sessionId) {
-      await fetch(`/api/live/session/${this.sessionId}/input`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "video", video: base64Jpeg }),
-      }).catch(() => {});
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type: "video", video: base64Jpeg }));
     }
   }
 
   async sendTextMessage(text: string) {
-    if (this.isConnected && this.sessionId) {
-      await fetch(`/api/live/session/${this.sessionId}/input`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "text", text }),
-      }).catch(() => {});
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type: "text", text }));
     }
   }
 
   async sendInterrupt() {
-    if (this.isConnected && this.sessionId) {
-      this.audioQueue = [];
-      await fetch(`/api/live/session/${this.sessionId}/input`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "audio_end" }),
-      }).catch(() => {});
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type: "interrupt" }));
+      this.socket.send(JSON.stringify({ type: "audio_end" }));
     }
   }
 
   disconnect() {
     this.isConnected = false;
     this.isConnecting = false;
-    this.audioQueue = [];
-
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-    }
-
-    if (this.sessionId) {
-      const id = this.sessionId;
-      this.sessionId = null;
-      fetch(`/api/live/session/${id}/stop`, { method: "POST" }).catch(() => {});
+    if (this.socket) {
+      try {
+        if (this.socket.readyState === WebSocket.OPEN) {
+          this.socket.send(JSON.stringify({ type: "audio_end" }));
+        }
+        this.socket.close(1000, "Client disconnected");
+      } catch {
+        // Socket may already be closed.
+      }
+      this.socket = null;
     }
   }
 
   get connected() {
     return this.isConnected;
-  }
-
-  async checkWeatherAndAlert(location = "Chennai") {
-    const data = await getWeatherForecast(location);
-    this.callbacks.onToolResult({ id: `weather-${Date.now()}`, name: "getWeatherForecast", result: data });
-    const alert = checkWeatherThresholds(data) || data.alert;
-    if (alert?.active) {
-      this.callbacks.onCaption(
-        formatLiveCaptionAlert(alert, data.location, this.currentLanguageCode.startsWith("ta")),
-      );
-    }
-    return data;
   }
 }
