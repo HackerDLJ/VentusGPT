@@ -21,10 +21,11 @@ fi
 source .venv/bin/activate
 python -m pip install -q -r backend/requirements.txt
 
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload &
+python -m uvicorn backend.live_app:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 
 echo "VentusGPT Python backend: http://localhost:8000"
+echo "Ventus Live WebSocket: ws://localhost:8000/api/live/ws"
 echo "VentusGPT frontend: http://localhost:5173"
 
 npm run dev:frontend
